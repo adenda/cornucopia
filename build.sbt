@@ -1,0 +1,15 @@
+name := "cornucopia"
+organization := "com.github.kliewkliew"
+
+version := "0.9.0"
+
+scalaVersion := "2.11.8"
+
+resolvers += "Sonatype Releases" at "https://oss.sonatype.org/service/repositories/releases/"
+resolvers += "Typesafe Releases" at "http://repo.typesafe.com/typesafe/releases/"
+
+libraryDependencies ++= Seq(
+  "biz.paluch.redis" % "lettuce" % "5.0.0.Beta1",
+  "org.scala-lang.modules" % "scala-java8-compat_2.11" % "0.8.0",
+  "com.typesafe.akka" %% "akka-stream-kafka" % "0.11-RC1"
+)
