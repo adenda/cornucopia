@@ -4,8 +4,9 @@ import akka.actor.ActorSystem
 import akka.kafka.{ConsumerSettings, Subscriptions}
 import akka.stream.{ActorMaterializer, ActorMaterializerSettings, Supervision}
 import com.typesafe.config.ConfigFactory
-import org.apache.kafka.common.serialization.ByteArrayDeserializer
+import org.apache.kafka.common.serialization.StringDeserializer
 import org.slf4j.LoggerFactory
+
 import scala.concurrent.duration._
 
 object Config {
@@ -30,9 +31,9 @@ object Config {
 
     private val materializerSettings =
     ActorMaterializerSettings(actorSystem).withSupervisionStrategy(decider)
-    implicit private val materializer = ActorMaterializer(materializerSettings)(actorSystem)
+    implicit val materializer = ActorMaterializer(materializerSettings)(actorSystem)
 
-    val settings = ConsumerSettings(actorSystem, new ByteArrayDeserializer, new ByteArrayDeserializer)
+    val settings = ConsumerSettings(actorSystem, new StringDeserializer, new StringDeserializer)
       .withBootstrapServers(kafkaServers)
       .withGroupId(groupId)
     val subscription = Subscriptions.topics(topic)
