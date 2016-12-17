@@ -13,6 +13,7 @@ The following keys for Kafka messages correspond to operations to be performed i
 * -slave
 
 The value contained in the message is the URI of the node to operate on.
+https://github.com/mp911de/lettuce/wiki/Redis-URI-and-connection-details
 
 Adding or removing a master node will automatically trigger a `*reshard` event.
 
