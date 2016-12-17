@@ -103,12 +103,14 @@ class Consumer {
         masterSlaveCount.get(node.getSlaveOf).incrementAndGet()
       }
 
-      val poorestMaster = masterSlaveCount.asScala.map(kv => (kv._1, kv._2.intValue)).reduce { (A, B) =>
-        if (A._2 < B._2)
-          A
-        else
-          B
-      }._1
+      val poorestMaster = masterSlaveCount.asScala
+        .map(kv => (kv._1, kv._2.intValue))
+        .reduce { (A, B) =>
+          if (A._2 < B._2)
+            A
+          else
+            B
+        }._1
 
       saladAPI.underlying.clusterReplicate(poorestMaster).isOK
     }
