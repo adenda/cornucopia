@@ -15,6 +15,7 @@ object Config {
     private val cornucopiaConfig = ConfigFactory.load().getConfig("cornucopia")
     val minReshardWait = cornucopiaConfig.getInt("reshard.interval").seconds
     val gracePeriod = cornucopiaConfig.getInt("grace.period")
+    val refreshTimeout = cornucopiaConfig.getInt("refresh.timeout") * 1000
   }
 
   object Consumer {
