@@ -12,7 +12,7 @@ The following keys for Kafka messages correspond to operations to be performed i
 * `-master`
 * `-slave`
 
-The value contained in the message is the URI of the node to operate on.
+The value contained in the message is the URI (must be resolvable at the microservice) of the node to operate on.
 https://github.com/mp911de/lettuce/wiki/Redis-URI-and-connection-details
 
 ie. (ensuring that the version of the binaries match the broker version)
@@ -22,7 +22,7 @@ ie. (ensuring that the version of the binaries match the broker version)
 --broker-list kafka-broker-1-vm:9092,kafka-broker-2-vm:9092 \
 --property parse.key=true \
 --property key.separator=","
-> +master,redis://localhost
+> +master,redis://redis-seed-2
 ```
 
 Adding or removing a master node will automatically trigger a `*reshard` event.
