@@ -16,11 +16,11 @@ object Connection {
   // Initialize the configuration.
   private val redisConfig = ConfigFactory.load().getConfig("redis")
   private val redisClusterConfig = redisConfig.getConfig("cluster")
-  private val redisClusterSeedServers = redisClusterConfig.getStringList("seed.servers")
+  private val redisClusterSeedServer = redisClusterConfig.getString("seed.server")
   private val redisClusterPort = redisClusterConfig.getInt("server.port")
 
   // Initialize the API.
-  private val nodes = redisClusterSeedServers.asScala.map(RedisURI.create(_, redisClusterPort))
+  private val nodes = List(RedisURI.create(redisClusterSeedServer, redisClusterPort))
 
   /**
     * Create a new API connection - new connections are necessary to refresh the view of the cluster topology

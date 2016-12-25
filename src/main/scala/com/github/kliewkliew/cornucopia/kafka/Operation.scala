@@ -20,17 +20,12 @@ object ADD_SLAVE extends Operation {
   val ordinal = ADD_MASTER.ordinal + 1
 }
 
-object REMOVE_MASTER extends Operation {
-  val key = "-master"
+object REMOVE_NODE extends Operation {
+  val key = "-node"
   val ordinal = ADD_SLAVE.ordinal + 1
-}
-
-object REMOVE_SLAVE extends Operation {
-  val key = "-slave"
-  val ordinal = REMOVE_MASTER.ordinal + 1
 }
 
 object RESHARD extends Operation {
   val key = "*reshard"
-  val ordinal = REMOVE_SLAVE.ordinal + 1
+  val ordinal = REMOVE_NODE.ordinal + 1
 }

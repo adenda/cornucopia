@@ -10,6 +10,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
 import com.lambdaworks.redis.RedisURI
+import com.lambdaworks.redis.models.role.RedisInstance.Role
 import org.slf4j.LoggerFactory
 
 import collection.JavaConverters._
@@ -36,20 +37,18 @@ class Consumer {
     def partitionEvents(key: String) = key.trim match {
       case ADD_MASTER.key     => ADD_MASTER.ordinal
       case ADD_SLAVE.key      => ADD_SLAVE.ordinal
-      case REMOVE_MASTER.key  => REMOVE_MASTER.ordinal
-      case REMOVE_SLAVE.key   => REMOVE_SLAVE.ordinal
+      case REMOVE_NODE.key    => REMOVE_NODE.ordinal
       case RESHARD.key        => RESHARD.ordinal
       case _                  => UNSUPPORTED.ordinal
     }
 
     val eventPartition = builder.add(Partition[Record](
-      6,  record => partitionEvents(record.key)))
+      5,  record => partitionEvents(record.key)))
 
     in ~> eventPartition
           eventPartition.out(ADD_MASTER.ordinal)    ~> streamAddMaster      ~> out
           eventPartition.out(ADD_SLAVE.ordinal)     ~> streamAddSlave       ~> out
-          eventPartition.out(REMOVE_MASTER.ordinal) ~> streamRemoveMaster   ~> out
-          eventPartition.out(REMOVE_SLAVE.ordinal)  ~> streamRemoveSlave    ~> out
+          eventPartition.out(REMOVE_NODE.ordinal)   ~> streamRemoveNode     ~> out
           eventPartition.out(RESHARD.ordinal)       ~> streamReshard        ~> out
           eventPartition.out(UNSUPPORTED.ordinal)   ~> unsupportedOperation ~> out
 
@@ -84,17 +83,11 @@ class Consumer {
     .mapAsync(1)(waitForTopologyRefresh)
   // Safely remove a master by redistributing its hash slots before blacklisting it from the cluster.
   // The data is given time to migrate as configured in `cornucopia.grace.period`.
-  private def streamRemoveMaster = Flow[Record]
-    .map(_.value)
-    .map(RedisURI.create)
-    .mapAsync(1)(removeMaster)
-    .mapAsync(1)(waitForTopologyRefresh)
   // Immediately remove a slave node from the cluster.
-  private def streamRemoveSlave = Flow[Record]
+  private def streamRemoveNode = Flow[Record]
     .map(_.value)
     .map(RedisURI.create)
-    .mapAsync(1)(getConnection(_)(newSaladAPI).clusterMyId)
-    .mapAsync(1)(removeNode(_)(newSaladAPI))
+    .mapAsync(1)(removeNode)
     .mapAsync(1)(waitForTopologyRefresh)
   // Redistribute the hash slots among all nodes in the cluster.
   private def streamReshard = Flow[Record]
@@ -120,17 +113,27 @@ class Consumer {
   // TODO: batch slave requests and use max-heap to find the poorest n masters for n slaves
   private def findMaster(redisURI: RedisURI): Future[Unit] = {
     implicit val saladAPI = newSaladAPI
-    saladAPI.clusterNodes.flatMap { allNodes =>
-      // Map of master node ids to the number of slaves + 1 for that master.
+    val slaveConnection = getConnection(redisURI)
+    val getSlaveId = slaveConnection.clusterMyId
+    val getAllNodes = saladAPI.clusterNodes
+
+    for {
+      slaveId <- getSlaveId
+      allNodes <- getAllNodes
+    } yield {
+      // Map of master node ids to the number of slaves for that master.
       val masterSlaveCount = new ConcurrentHashMap[String, AtomicInteger](
-        allNodes.size,
-        0.75f,
+        allNodes.size + 1,
+        1,
         Runtime.getRuntime.availableProcessors
       )
       // Populate the map.
-      saladAPI.masterNodes(allNodes).foreach(master => masterSlaveCount.put(master.getNodeId, new AtomicInteger(0)))
+      saladAPI.masterNodes(allNodes)
+        .filterNot(slaveId == _.getNodeId)
+        .foreach(master => masterSlaveCount.put(master.getNodeId, new AtomicInteger(0)))
       allNodes.map { node =>
-        Option.apply(node.getSlaveOf).map(master => masterSlaveCount.get(master).incrementAndGet())
+        Option.apply(node.getSlaveOf)
+          .map(master => masterSlaveCount.get(master).incrementAndGet())
       }
 
       val poorestMaster = masterSlaveCount.asScala
@@ -142,7 +145,25 @@ class Consumer {
             B
         }._1
 
-      getConnection(redisURI).clusterReplicate(poorestMaster)
+      slaveConnection.clusterReplicate(poorestMaster)
+    }
+  }
+
+  def removeNode(redisURI: RedisURI) = {
+    implicit val saladAPI = newSaladAPI
+    val getRemovalId = getConnection(redisURI).clusterMyId
+    val getAllNodes = saladAPI.clusterNodes
+
+    for {
+      removalId <- getRemovalId
+      allNodes <- getAllNodes
+    } yield {
+      val role = allNodes.find(removalId == _.getNodeId).get.getRole
+      role match {
+        case Role.MASTER => removeMaster(removalId)
+        case Role.SLAVE  => forgetNode(removalId)
+        case nodeType    => throw new Exception(s"$nodeType not supported")
+      }
     }
   }
 
@@ -150,43 +171,35 @@ class Consumer {
     * Safely remove a master by redistributing its hash slots before blacklisting it from the cluster.
     * The data is given time to migrate as configured in `cornucopia.grace.period`.
     *
-    * @param redisURI The URI of the master that will be removed from the cluster.
+    * @param removalId The node id of the master that will be removed from the cluster.
     * @return Indicate that the hash slots were redistributed and the master removed from the cluster.
     */
-  private def removeMaster(redisURI: RedisURI): Future[Unit] = {
-    implicit val saladAPI = newSaladAPI
-    val getRemovalId = getConnection(redisURI).clusterMyId
-    val getAllNodes = saladAPI.clusterNodes
-    val getMasterNodes = getAllNodes.map(saladAPI.masterNodes(_))
-
-    for {
-      removalId <- getRemovalId
-      allNodes <- getAllNodes
-      masterNodes <- getMasterNodes
-    } yield {
-      val masterViewWithoutThisNode = masterNodes.filterNot(removalId == _.getNodeId)
+  private def removeMaster(removalId: String)(implicit saladAPI: SaladAPI): Future[Unit] =
+    saladAPI.clusterNodes.map { allNodes =>
+      val masterViewWithoutThisNode = saladAPI.masterNodes(allNodes).filterNot(removalId == _.getNodeId)
       val reshardDone = reshardCluster(masterViewWithoutThisNode).map { _ =>
         scala.concurrent.blocking(Thread.sleep(Config.Cornucopia.gracePeriod)) // Allow data to migrate
       }
-      reshardDone.map(_ => removeNode(removalId))
+      reshardDone.map(_ => forgetNode(removalId))
     }
-  }
 
   /**
     * Notify all nodes in the cluster to forget this node.
     *
-    * @param removalId
+    * @param removalId The node id of the node to be forgotten by the cluster.
     * @return
     */
-  def removeNode(removalId: String)(implicit saladAPI: SaladAPI): Future[Unit] =
+  def forgetNode(removalId: String)(implicit saladAPI: SaladAPI): Future[Unit] =
     saladAPI.clusterNodes.flatMap { allNodes =>
+      val connectionToRemovalNode = getConnection(removalId)
       val opNodes = allNodes
         .filterNot(removalId == _.getNodeId) // Node cannot forget itself
         .filterNot(removalId == _.getSlaveOf) // Node cannot forget its master
       val listFutureResults = opNodes.map { node =>
         getConnection(node.getNodeId).clusterForget(removalId)
       }
-      Future.sequence(listFutureResults).flatMap(_ => saladAPI.clusterReset(true))
+      Future.sequence(listFutureResults)
+        .flatMap(_ => connectionToRemovalNode.clusterReset(true))
     }
 
   /**
@@ -211,7 +224,6 @@ class Consumer {
     val reshardResults = List.range(0, 16384).toStream.map { slot =>
       saladAPI.clusterSetSlotNode(slot, masters(slot % masters.length).getNodeId)
     }
-
     val totallyResharded = Future.sequence(reshardResults)
     totallyResharded.onFailure { case e => logger.error(s"Failed to redistribute hash slots", e) }
     totallyResharded.map(_ => logger.info(s"Redistributed hash slots"))

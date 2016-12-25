@@ -9,8 +9,7 @@ The following keys for Kafka messages correspond to operations to be performed i
 ## Add or Remove a Node
 * `+master`
 * `+slave`
-* `-master`
-* `-slave`
+* `-node`
 
 The value contained in the message is the URI (must be resolvable at the microservice) of the node to operate on.
 https://github.com/mp911de/lettuce/wiki/Redis-URI-and-connection-details
@@ -31,6 +30,7 @@ New slave nodes will initially be assigned to the master with the least slaves.
 Beyond that, Redis Cluster itself has the ability to migrate slaves to other masters based on the cluster configuration.
 
 Note that Redis cluster will automatically assign or reassign nodes between master or slave roles, or migrate slaves between masters or do failover.
+You may see errors due to Redis doing reassignment when the cluster is small.
 ie. When testing with only two nodes, after adding the second node as a master, the first node can become a slave.
  If you then try to remove the second node, there will be no masters left.
 
