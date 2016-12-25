@@ -97,8 +97,8 @@ class Consumer {
   private def unsupportedOperation = Flow[Record]
     .map(record => throw new IllegalArgumentException(s"Unsupported operation ${record.key} for ${record.value}"))
 
-  private def addNodeToCluster(uRI: RedisURI): Future[RedisURI] =
-    newSaladAPI.clusterMeet(uRI).map(_ => uRI)
+  private def addNodeToCluster(redisURI: RedisURI): Future[RedisURI] =
+    newSaladAPI.clusterMeet(redisURI).map(_ => redisURI)
   private def waitForTopologyRefresh[T](passthrough: T): Future[T]  = Future {
     scala.concurrent.blocking(Thread.sleep(Config.Cornucopia.refreshTimeout))
     passthrough
@@ -221,8 +221,10 @@ class Consumer {
   // TODO: implement this as a batched stage in the stream so that it doesn't need to be synchronized
   // batch node additions and removals before constructing the final view to pass to this function
   private def reshardCluster(masters: mutable.Buffer[RedisClusterNode])(implicit saladAPI: SaladAPI): Future[Unit] = synchronized {
-    val reshardResults = List.range(0, 16384).toStream.map { slot =>
-      saladAPI.clusterSetSlotNode(slot, masters(slot % masters.length).getNodeId)
+    val reshardResults = masters.map(master => getConnection(master.getNodeId)).flatMap { masterConn =>
+      List.range(0, 16384).toStream.map { slot =>
+        masterConn.clusterSetSlotNode(slot, masters(slot % masters.length).getNodeId)
+      }
     }
     val totallyResharded = Future.sequence(reshardResults)
     totallyResharded.onFailure { case e => logger.error(s"Failed to redistribute hash slots", e) }
