@@ -12,10 +12,11 @@ import scala.concurrent.duration._
 
 object Config {
   object Cornucopia {
-    private val cornucopiaConfig = ConfigFactory.load().getConfig("cornucopia")
-    val minReshardWait = cornucopiaConfig.getInt("reshard.interval").seconds
-    val gracePeriod = cornucopiaConfig.getInt("grace.period")
-    val refreshTimeout = cornucopiaConfig.getInt("refresh.timeout") * 1000
+    private val config = ConfigFactory.load().getConfig("cornucopia")
+    val minReshardWait = config.getInt("reshard.interval").seconds
+    val gracePeriod = config.getInt("grace.period") * 1000
+    val refreshTimeout = config.getInt("refresh.timeout") * 1000
+    val batchPeriod = config.getInt("batch.period").seconds
   }
 
   object Consumer {

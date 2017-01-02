@@ -32,10 +32,23 @@ Beyond that, Redis Cluster itself has the ability to migrate slaves to other mas
 Note that Redis cluster will automatically assign or reassign nodes between master or slave roles, or migrate slaves between masters or do failover.
 You may see errors due to Redis doing reassignment when the cluster is small.
 ie. When testing with only two nodes, after adding the second node as a master, the first node can become a slave.
- If you then try to remove the second node, there will be no masters left.
+If you then try to remove the second node, there will be no masters left.
+The behaviour is more predictable as more nodes are added to the cluster.
+
+There may be multiple node ids (dead nodes that were not previously removed) assigned to one URI and Redis only returns one at a time so you may have remove the same URI multiple times to remove the correct node id.
 
 ## Redistribute Hash Slots
 * `*reshard`
+
+ie.
+```
+/opt/kafka_2.11-0.10.1.0/bin/kafka-console-producer.sh \
+--topic cornucopia \
+--broker-list kafka-broker-1-vm:9092,kafka-broker-2-vm:9092 \
+--property parse.key=true \
+--property key.separator=","
+> *reshard,
+```
 
 Hash slots will be assigned to master nodes based on the assumption that CPU usage is balanced among the nodes (which should be the case if your application partitions the data using a good hash key).
 
