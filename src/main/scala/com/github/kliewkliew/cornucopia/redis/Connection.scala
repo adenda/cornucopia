@@ -11,6 +11,7 @@ import com.typesafe.config.ConfigFactory
 import org.slf4j.LoggerFactory
 
 import collection.JavaConverters._
+import scala.concurrent.{ExecutionContext, Future}
 import scala.util.{Failure, Success, Try}
 
 object Connection {
@@ -52,24 +53,28 @@ object Connection {
     * @param redisURI
     * @return
     */
-  def getConnection(redisURI: RedisURI)(implicit saladAPI: SaladAPI): SaladClusterAPI[CodecType,CodecType] =
+  def getConnection(redisURI: RedisURI)(implicit saladAPI: SaladAPI, executionContext: ExecutionContext)
+  : Future[SaladClusterAPI[CodecType,CodecType]] =
     verifyConnection(
       Try(saladAPI.underlying.getConnection(
-        InetAddress.getByName(redisURI.getHost).getHostAddress,
+        saladAPI.canonicalizeURI(redisURI).getHost,
         redisURI.getPort)),
       redisURI.toString)
-  def getConnection(nodeId: String)(implicit saladAPI: SaladAPI): SaladClusterAPI[CodecType,CodecType] =
+  def getConnection(nodeId: String)(implicit saladAPI: SaladAPI, executionContext: ExecutionContext)
+  : Future[SaladClusterAPI[CodecType,CodecType]] =
     verifyConnection(
       Try(saladAPI.underlying.getConnection(nodeId)),
       nodeId)
-  def verifyConnection(api: Try[RedisClusterAsyncCommands[CodecType,CodecType]], identifier: String) =
+  def verifyConnection(api: Try[RedisClusterAsyncCommands[CodecType,CodecType]], identifier: String)
+                      (implicit executionContext: ExecutionContext)
+  : Future[SaladClusterAPI[CodecType,CodecType]] =
   api match {
     case Success(conn) =>
-      SaladClusterAPI(conn)
+      Future(SaladClusterAPI(conn))
     case Failure(e) =>
       val err = s"Failed to connect to node: $identifier"
       LoggerFactory.getLogger(this.getClass).error(err, e)
-      throw new Exception(err)
+      Future.failed(e)
   }
 
 }
