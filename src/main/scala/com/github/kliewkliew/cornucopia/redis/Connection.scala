@@ -1,8 +1,6 @@
 package com.github.kliewkliew.cornucopia.redis
 
-import java.net.InetAddress
-
-import com.github.kliewkliew.salad.api.async.{AsyncSaladAPI, SaladClusterAPI}
+import com.github.kliewkliew.salad.api.async.{AsyncSaladAPI, AsyncSaladClusterAPI}
 import com.lambdaworks.redis.{ReadFrom, RedisURI}
 import com.lambdaworks.redis.cluster.api.async.{RedisAdvancedClusterAsyncCommands, RedisClusterAsyncCommands}
 import com.lambdaworks.redis.cluster.{ClusterClientOptions, ClusterTopologyRefreshOptions, RedisClusterClient}
@@ -20,8 +18,6 @@ object Connection {
   private val redisClusterConfig = redisConfig.getConfig("cluster")
   private val redisClusterSeedServer = redisClusterConfig.getString("seed.server.host")
   private val redisClusterPort = redisClusterConfig.getInt("seed.server.port")
-
-  // Initialize the API.
   private val nodes = List(RedisURI.create(redisClusterSeedServer, redisClusterPort))
 
   /**
@@ -54,23 +50,23 @@ object Connection {
     * @return
     */
   def getConnection(redisURI: RedisURI)(implicit saladAPI: SaladAPI, executionContext: ExecutionContext)
-  : Future[SaladClusterAPI[CodecType,CodecType]] =
+  : Future[AsyncSaladClusterAPI[CodecType,CodecType]] =
     verifyConnection(
       Try(saladAPI.underlying.getConnection(
         saladAPI.canonicalizeURI(redisURI).getHost,
         redisURI.getPort)),
       redisURI.toString)
   def getConnection(nodeId: String)(implicit saladAPI: SaladAPI, executionContext: ExecutionContext)
-  : Future[SaladClusterAPI[CodecType,CodecType]] =
+  : Future[AsyncSaladClusterAPI[CodecType,CodecType]] =
     verifyConnection(
       Try(saladAPI.underlying.getConnection(nodeId)),
       nodeId)
   def verifyConnection(api: Try[RedisClusterAsyncCommands[CodecType,CodecType]], identifier: String)
                       (implicit executionContext: ExecutionContext)
-  : Future[SaladClusterAPI[CodecType,CodecType]] =
+  : Future[AsyncSaladClusterAPI[CodecType,CodecType]] =
   api match {
     case Success(conn) =>
-      Future(SaladClusterAPI(conn))
+      Future(AsyncSaladClusterAPI(conn))
     case Failure(e) =>
       val err = s"Failed to connect to node: $identifier"
       LoggerFactory.getLogger(this.getClass).error(err, e)

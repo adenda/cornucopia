@@ -10,7 +10,7 @@ import com.lambdaworks.redis.cluster.models.partitions.RedisClusterNode
 import org.apache.kafka.clients.consumer.ConsumerRecord
 import java.util.concurrent.atomic.AtomicInteger
 
-import com.github.kliewkliew.salad.api.async.SaladClusterAPI
+import com.github.kliewkliew.salad.api.async.AsyncSaladClusterAPI
 import com.lambdaworks.redis.RedisURI
 import com.lambdaworks.redis.models.role.RedisInstance.Role
 import org.slf4j.LoggerFactory
@@ -298,7 +298,7 @@ class Consumer {
       val liveMasters = masterNodes.filter(_.isConnected)
       lazy val idToURI = new util.HashMap[String,RedisURI](liveMasters.length + 1, 1)
       // Re-use cluster connections so we don't exceed file-handle limit or waste resources.
-      lazy val clusterConnections = new util.HashMap[String,Future[SaladClusterAPI[CodecType,CodecType]]](liveMasters.length + 1, 1)
+      lazy val clusterConnections = new util.HashMap[String,Future[AsyncSaladClusterAPI[CodecType,CodecType]]](liveMasters.length + 1, 1)
       liveMasters.map { master =>
         idToURI.put(master.getNodeId, master.getUri)
         clusterConnections.put(master.getNodeId, getConnection(master.getNodeId))
@@ -361,7 +361,7 @@ class Consumer {
     */
   private def migrateSlot(slot: Int, sourceNodeId: String, destinationNodeId: String, destinationURI: RedisURI,
                           masters: mutable.Buffer[RedisClusterNode],
-                          clusterConnections: util.HashMap[String,Future[SaladClusterAPI[CodecType,CodecType]]])
+                          clusterConnections: util.HashMap[String,Future[AsyncSaladClusterAPI[CodecType,CodecType]]])
                          (implicit saladAPI: SaladAPI, executionContext: ExecutionContext)
   : Future[Unit] = {
     destinationNodeId match {
@@ -450,7 +450,6 @@ class Consumer {
         underlying.dequeue()
         underlying.enqueue(entry)
       }
-
   }
 
 }
