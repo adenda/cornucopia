@@ -1,5 +1,7 @@
 # Cornucopia
 A microservice for auto-sharding Redis Cluster.
+Master branch is for development.
+Stable branch is for production.
 
 Implemented on Kafka and Akka Streams, with Salad wrapping the Java 8 Lettuce API for Redis.
 
