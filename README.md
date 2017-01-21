@@ -1,5 +1,6 @@
 # Cornucopia
 A microservice for auto-sharding Redis Cluster.
+
 Master branch is for development.
 Stable branch is for production.
 
