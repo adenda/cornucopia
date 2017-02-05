@@ -370,9 +370,6 @@ class Consumer {
   private def slotNode(slot: Int, masters: mutable.Buffer[RedisClusterNode]): String =
     masters(slot % masters.length).getNodeId
 
-  // FIXME!: re-using connections leads to inconsistent results. Opening a new connection for each migration leads to
-  // issues with memory and Netty's HashedWheelTimer (too many new connections being opened in a span of time.
-  // Slot migration should be implemented as a stream so that it can be throttled.
   /**
     * Migrate all keys in a slot from the source node to the destination node and update the slot assignment on the
     * affected nodes.
