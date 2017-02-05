@@ -4,13 +4,13 @@ import java.util
 
 import Config.Consumer.{cornucopiaSource, materializer}
 import com.github.kliewkliew.cornucopia.redis.Connection._
-import akka.stream.ClosedShape
-import akka.stream.scaladsl.{Flow, GraphDSL, Partition, RunnableGraph, Sink}
+import akka.stream.{ClosedShape, ThrottleMode}
+import akka.stream.scaladsl.{Flow, GraphDSL, MergePreferred, Partition, RunnableGraph, Sink}
 import com.lambdaworks.redis.cluster.models.partitions.RedisClusterNode
 import org.apache.kafka.clients.consumer.ConsumerRecord
 import java.util.concurrent.atomic.AtomicInteger
 
-import com.github.kliewkliew.salad.api.async.AsyncSaladClusterAPI
+import com.github.kliewkliew.salad.SaladClusterAPI
 import com.lambdaworks.redis.RedisURI
 import com.lambdaworks.redis.models.role.RedisInstance.Role
 import org.slf4j.LoggerFactory
@@ -37,7 +37,7 @@ class Consumer {
     val in = cornucopiaSource
     val out = Sink.ignore
 
-    def partitionEvents(key: String) = key.trim match {
+    def partitionEvents(key: String) = key.trim.toLowerCase match {
       case ADD_MASTER.key     => ADD_MASTER.ordinal
       case ADD_SLAVE.key      => ADD_SLAVE.ordinal
       case REMOVE_NODE.key    => REMOVE_NODE.ordinal
@@ -45,42 +45,58 @@ class Consumer {
       case _                  => UNSUPPORTED.ordinal
     }
 
-    val eventPartition = builder.add(Partition[Record](
-      5, record => partitionEvents(record.key)))
+    def partitionNodeRemoval(key: String) = key.trim.toLowerCase match {
+      case REMOVE_MASTER.key  => REMOVE_MASTER.ordinal
+      case REMOVE_SLAVE.key   => REMOVE_SLAVE.ordinal
+      case UNSUPPORTED.key    => UNSUPPORTED.ordinal
+    }
 
-    in ~> eventPartition
-          eventPartition.out(ADD_MASTER.ordinal)    ~> streamAddMaster      ~> out
-          eventPartition.out(ADD_SLAVE.ordinal)     ~> streamAddSlave       ~> out
-          eventPartition.out(REMOVE_NODE.ordinal)   ~> streamRemoveNode     ~> out
-          eventPartition.out(RESHARD.ordinal)       ~> streamReshard        ~> out
-          eventPartition.out(UNSUPPORTED.ordinal)   ~> unsupportedOperation ~> out
+    val mergeFeedback = builder.add(MergePreferred[KeyValue](2))
+
+    val partition = builder.add(Partition[KeyValue](
+      5, kv => partitionEvents(kv.key)))
+
+    val kv = builder.add(extractKeyValue)
+
+    val partitionRm = builder.add(Partition[KeyValue](
+      3, kv => partitionNodeRemoval(kv.key)
+    ))
+
+    in ~> kv
+    kv ~> mergeFeedback.preferred
+    mergeFeedback.out  ~> partition
+                          partition.out(ADD_MASTER.ordinal)    ~> streamAddMaster      ~> mergeFeedback.in(0)
+                          partition.out(ADD_SLAVE.ordinal)     ~> streamAddSlave       ~> out
+                          partition.out(REMOVE_NODE.ordinal)   ~> streamRemoveNode     ~> partitionRm
+                                                                                          partitionRm.out(REMOVE_MASTER.ordinal)  ~> mergeFeedback.in(1)
+                                                                                          partitionRm.out(REMOVE_SLAVE.ordinal)   ~> streamRemoveSlave    ~> out
+                                                                                          partitionRm.out(UNSUPPORTED.ordinal)    ~> unsupportedOperation ~> out
+                          partition.out(RESHARD.ordinal)       ~> streamReshard        ~> out
+                          partition.out(UNSUPPORTED.ordinal)   ~> unsupportedOperation ~> out
 
     ClosedShape
   }).run()
 
   /**
-    * TODO:
-    * - separate master and slave operations into different streams so that we can clear master queue before slave queue
-    * - resharding limited per interval (min wait period) and implemented as a stage in the graph
-    **/
-
-  /**
     * Stream definitions for the graph.
     */
-  // Add a master node to the cluster and redistribute the hash slots to the cluster.
-  private def streamAddMaster(implicit executionContext: ExecutionContext) = Flow[Record]
+  // Extract a tuple of the key and value from a Kafka record.
+  case class KeyValue(key: String, value: String)
+  private def extractKeyValue = Flow[Record]
+    .map[KeyValue](record => KeyValue(record.key, record.value))
+
+  // Add a master node to the cluster.
+  private def streamAddMaster(implicit executionContext: ExecutionContext) = Flow[KeyValue]
     .map(_.value)
     .map(RedisURI.create)
     .map(newSaladAPI.canonicalizeURI)
     .groupedWithin(100, Config.Cornucopia.batchPeriod)
     .mapAsync(1)(addNodesToCluster)
     .mapAsync(1)(waitForTopologyRefresh)
-    .mapAsync(1)(_ => reshardCluster)
-    .mapAsync(1)(waitForTopologyRefresh)
-    .mapAsync(1)(_ => logTopology)
+    .map(_ => KeyValue(RESHARD.key, ""))
 
   // Add a slave node to the cluster, replicating the master that has the fewest slaves.
-  private def streamAddSlave(implicit executionContext: ExecutionContext) = Flow[Record]
+  private def streamAddSlave(implicit executionContext: ExecutionContext) = Flow[KeyValue]
     .map(_.value)
     .map(RedisURI.create)
     .map(newSaladAPI.canonicalizeURI)
@@ -91,25 +107,34 @@ class Consumer {
     .mapAsync(1)(waitForTopologyRefresh)
     .mapAsync(1)(_ => logTopology)
 
-  // Safely remove a master by redistributing its hash slots before blacklisting it from the cluster.
-  // The data is given time to migrate as configured in `cornucopia.grace.period`.
-  // Immediately remove a slave node from the cluster.
-  private def streamRemoveNode(implicit executionContext: ExecutionContext) = Flow[Record]
+  // Emit a key-value pair indicating the node type and URI.
+  private def streamRemoveNode(implicit executionContext: ExecutionContext) = Flow[KeyValue]
     .map(_.value)
     .map(RedisURI.create)
     .map(newSaladAPI.canonicalizeURI)
+    .mapAsync(1)(emitNodeType)
+
+  // Remove a slave node from the cluster.
+  private def streamRemoveSlave(implicit executionContext: ExecutionContext) = Flow[KeyValue]
+    .map(_.value)
     .groupedWithin(100, Config.Cornucopia.batchPeriod)
-    .mapAsync(1)(removeNodes)
+    .mapAsync(1)(forgetNodes)
     .mapAsync(1)(waitForTopologyRefresh)
     .mapAsync(1)(_ => logTopology)
 
   // Redistribute the hash slots among all nodes in the cluster.
-  private def streamReshard(implicit executionContext: ExecutionContext) = Flow[Record]
-    .mapAsync(1)(_ => reshardCluster)
+  // Execute slot redistribution at most once per configured interval.
+  // Combine multiple requests into one request.
+  private def streamReshard(implicit executionContext: ExecutionContext) = Flow[KeyValue]
+    .map(record => Seq(record.value))
+    .conflate((seq1, seq2) => seq1 ++ seq2)
+    .throttle(1, Config.Cornucopia.minReshardWait, 1, ThrottleMode.Shaping)
+    .mapAsync(1)(reshardCluster)
     .mapAsync(1)(waitForTopologyRefresh)
+    .mapAsync(1)(_ => logTopology)
 
   // Throw for keys indicating unsupported operations.
-  private def unsupportedOperation = Flow[Record]
+  private def unsupportedOperation = Flow[KeyValue]
     .map(record => throw new IllegalArgumentException(s"Unsupported operation ${record.key} for ${record.value}"))
 
   /**
@@ -147,7 +172,7 @@ class Consumer {
     *
     * @param redisURIList The list of URI of the new nodes.
     * @param executionContext The thread dispatcher context.
-    * @return The list of URI if the nodes were met.
+    * @return The list of URI if the nodes were met. TODO: emit only the nodes that were successfully added.
     */
   private def addNodesToCluster(redisURIList: Seq[RedisURI])(implicit executionContext: ExecutionContext): Future[Seq[RedisURI]] = {
     implicit val saladAPI = newSaladAPI
@@ -208,21 +233,24 @@ class Consumer {
   }
 
   /**
-    * Remove a list of nodes from the cluster.
-    *
-    * @param redisURIList The list of ip addresses of nodes to be removed from the cluster. Hostnames are not acceptable.
-    * @param executionContext The thread dispatcher context.
-    * @return
+    * Emit a key-value representing the node-type and the node-id.
+    * @param redisURI
+    * @param executionContext
+    * @return the node type and id.
     */
-  def removeNodes(redisURIList: Seq[RedisURI])(implicit executionContext: ExecutionContext): Future[Unit] = {
+  def emitNodeType(redisURI:RedisURI)(implicit executionContext: ExecutionContext): Future[KeyValue] = {
     implicit val saladAPI = newSaladAPI
-    saladAPI.clusterNodes.flatMap { allNodes =>
-      val removalIds = allNodes.filter(node => redisURIList.contains(node.getUri)).map(_.getNodeId)
-      val masterNodesIds = allNodes.filter(Role.MASTER == _.getRole).map(_.getNodeId)
-      val masterNodesIdsToRemove = removalIds.intersect(masterNodesIds)
-      val slaveNodesIdsToRemove = removalIds.diff(masterNodesIdsToRemove)
-      val removalResults = List(removeMasters(masterNodesIdsToRemove), forgetNodes(slaveNodesIdsToRemove))
-      Future.sequence(removalResults).map(x => x)
+    saladAPI.clusterNodes.map { allNodes =>
+      val removalNodeOpt = allNodes.find(node => node.getUri.equals(redisURI))
+      if (removalNodeOpt.isEmpty) throw new Exception(s"Node not in cluster: $redisURI")
+      val kv = removalNodeOpt.map { node =>
+        node.getRole match {
+          case Role.MASTER => KeyValue(RESHARD.key, node.getNodeId)
+          case Role.SLAVE  => KeyValue(REMOVE_SLAVE.key, node.getNodeId)
+          case _           => KeyValue(UNSUPPORTED.key, node.getNodeId)
+        }
+      }
+      kv.get
     }
   }
 
@@ -241,7 +269,6 @@ class Consumer {
     reshardDone.flatMap(_ => forgetNodes(withoutNodes))
   }
 
-  // TODO: implement this as a partition in the graph and also expose this as a user operation.
   /**
     * Notify all nodes in the cluster to forget this node.
     *
@@ -249,21 +276,25 @@ class Consumer {
     * @param executionContext The thread dispatcher context.
     * @return A future indicating that the node was forgotten by all nodes in the cluster.
     */
-  def forgetNodes(withoutNodes: Seq[String])(implicit executionContext: ExecutionContext): Future[Unit] = {
+  def forgetNodes(withoutNodes: Seq[String])(implicit executionContext: ExecutionContext): Future[Unit] =
+  if (!withoutNodes.exists(_.nonEmpty))
+    Future(Unit)
+  else {
     implicit val saladAPI = newSaladAPI
     saladAPI.clusterNodes.flatMap { allNodes =>
       logger.info(s"Forgetting nodes: $withoutNodes")
       // Reset the nodes to be removed.
-      withoutNodes.map(getConnection).map(_.map(_.clusterReset(true)))
+      val validWithoutNodes = withoutNodes.filter(_.nonEmpty)
+      validWithoutNodes.map(getConnection).map(_.map(_.clusterReset(true)))
 
       // The nodes that will remain in the cluster should forget the nodes that will be removed.
       val withNodes = allNodes
-        .filterNot(node => withoutNodes.contains(node.getNodeId)) // Node cannot forget itself.
+        .filterNot(node => validWithoutNodes.contains(node.getNodeId)) // Node cannot forget itself.
 
       // For the cross product of `withNodes` and `withoutNodes`; to remove the nodes in `withoutNodes`.
       val forgetResults = for {
         operatorNode <- withNodes
-        operandNodeId <- withoutNodes
+        operandNodeId <- validWithoutNodes
       } yield {
         if (operatorNode.getSlaveOf == operandNodeId)
           Future(Unit) // Node cannot forget its master.
@@ -275,21 +306,13 @@ class Consumer {
   }
 
   /**
-    * Reshard the cluster using the current cluster view.
-    *
-    * @return Boolean indicating that all hash slots were reassigned successfully.
-    */
-  private def reshardCluster: Future[Unit] =
-    reshardCluster(List.empty[String])
-
-  /**
     * Reshard the cluster using a view of the cluster consisting of a subset of master nodes.
     *
     * @param withoutNodes The list of ids of nodes that will not be assigned hash slots.
     * @return Boolean indicating that all hash slots were reassigned successfully.
     */
   private def reshardCluster(withoutNodes: Seq[String])
-  : Future[Unit] = synchronized {
+  : Future[Unit] = {
     // Execute futures using a thread pool so we don't run out of memory due to futures.
     implicit val executionContext = Config.Consumer.actorSystem.dispatchers.lookup("akka.actor.resharding-dispatcher")
     implicit val saladAPI = newSaladAPI
@@ -331,7 +354,7 @@ class Consumer {
       finalMigrateResult.onComplete { case _ =>
         List.range(0, 16384).map(notifySlotAssignment(_, assignableMasters))
       }
-      finalMigrateResult.map(_ => Unit)
+      finalMigrateResult.flatMap(_ => forgetNodes(withoutNodes))
     }
   }
 
@@ -364,8 +387,8 @@ class Consumer {
     */
   private def migrateSlot(slot: Int, sourceNodeId: String, destinationNodeId: String, destinationURI: RedisURI,
                           masters: mutable.Buffer[RedisClusterNode],
-                          clusterConnections: util.HashMap[String,Future[AsyncSaladClusterAPI[CodecType,CodecType]]])
-                         (implicit saladAPI: SaladAPI, executionContext: ExecutionContext)
+                          clusterConnections: util.HashMap[String,Future[SaladClusterAPI[CodecType,CodecType]]])
+                         (implicit saladAPI: Salad, executionContext: ExecutionContext)
   : Future[Unit] = {
     destinationNodeId match {
       case `sourceNodeId` =>
@@ -416,7 +439,7 @@ class Consumer {
     * @return Future indicating success.
     */
   private def notifySlotAssignment(slot: Int, masters: mutable.Buffer[RedisClusterNode])
-                                  (implicit saladAPI: SaladAPI, executionContext: ExecutionContext)
+                                  (implicit saladAPI: Salad, executionContext: ExecutionContext)
   : Future[Unit] = {
     val getMasterConnections = masters.map(master => getConnection(master.getNodeId))
     Future.sequence(getMasterConnections).flatMap { masterConnections =>

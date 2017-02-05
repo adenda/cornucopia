@@ -1,6 +1,6 @@
 package com.github.kliewkliew.cornucopia.redis
 
-import com.github.kliewkliew.salad.api.async.{AsyncSaladAPI, AsyncSaladClusterAPI}
+import com.github.kliewkliew.salad.SaladClusterAPI
 import com.lambdaworks.redis.{ReadFrom, RedisURI}
 import com.lambdaworks.redis.cluster.api.async.{RedisAdvancedClusterAsyncCommands, RedisClusterAsyncCommands}
 import com.lambdaworks.redis.cluster.{ClusterClientOptions, ClusterTopologyRefreshOptions, RedisClusterClient}
@@ -28,10 +28,10 @@ object Connection {
     * To reuse the same connection, assign it to a val and pass explicitly or as an implicit parameter.
     */
   type CodecType = Array[Byte]
-  type SaladAPI = AsyncSaladAPI[CodecType,CodecType,RedisAdvancedClusterAsyncCommands[CodecType,CodecType]]
-  def newSaladAPI: SaladAPI = newSaladAPI(nodes)
-  def newSaladAPI(redisURI: RedisURI): SaladAPI = newSaladAPI(List(redisURI))
-  def newSaladAPI(redisURI: List[RedisURI]): SaladAPI = {
+  type Salad = SaladClusterAPI[CodecType,CodecType]
+  def newSaladAPI: Salad = newSaladAPI(nodes)
+  def newSaladAPI(redisURI: RedisURI): Salad = newSaladAPI(List(redisURI))
+  def newSaladAPI(redisURI: List[RedisURI]): Salad = {
     val client = RedisClusterClient.create(redisURI.asJava)
     val topologyRefreshOptions = ClusterTopologyRefreshOptions.builder()
       .enableAllAdaptiveRefreshTriggers()
@@ -41,7 +41,7 @@ object Connection {
       .build())
     val connection = client.connect(ByteArrayCodec.INSTANCE)
     connection.setReadFrom(ReadFrom.MASTER)
-    AsyncSaladAPI(connection.async())
+    new SaladClusterAPI(connection.async())
   }
 
   /**
@@ -49,24 +49,24 @@ object Connection {
     * @param redisURI
     * @return
     */
-  def getConnection(redisURI: RedisURI)(implicit saladAPI: SaladAPI, executionContext: ExecutionContext)
-  : Future[AsyncSaladClusterAPI[CodecType,CodecType]] =
+  def getConnection(redisURI: RedisURI)(implicit saladAPI: Salad, executionContext: ExecutionContext)
+  : Future[Salad] =
     verifyConnection(
-      Try(saladAPI.underlying.getConnection(
+      Try(saladAPI.underlying.asInstanceOf[RedisAdvancedClusterAsyncCommands[CodecType,CodecType]].getConnection(
         saladAPI.canonicalizeURI(redisURI).getHost,
         redisURI.getPort)),
       redisURI.toString)
-  def getConnection(nodeId: String)(implicit saladAPI: SaladAPI, executionContext: ExecutionContext)
-  : Future[AsyncSaladClusterAPI[CodecType,CodecType]] =
+  def getConnection(nodeId: String)(implicit saladAPI: Salad, executionContext: ExecutionContext)
+  : Future[Salad] =
     verifyConnection(
-      Try(saladAPI.underlying.getConnection(nodeId)),
+      Try(saladAPI.underlying.asInstanceOf[RedisAdvancedClusterAsyncCommands[CodecType,CodecType]].getConnection(nodeId)),
       nodeId)
   def verifyConnection(api: Try[RedisClusterAsyncCommands[CodecType,CodecType]], identifier: String)
                       (implicit executionContext: ExecutionContext)
-  : Future[AsyncSaladClusterAPI[CodecType,CodecType]] =
+  : Future[Salad] =
   api match {
     case Success(conn) =>
-      Future(AsyncSaladClusterAPI(conn))
+      Future(new SaladClusterAPI(conn))
     case Failure(e) =>
       val err = s"Failed to connect to node: $identifier"
       LoggerFactory.getLogger(this.getClass).error(err, e)
