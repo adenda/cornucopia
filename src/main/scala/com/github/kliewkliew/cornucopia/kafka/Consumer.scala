@@ -321,7 +321,7 @@ class Consumer {
       val liveMasters = masterNodes.filter(_.isConnected)
       lazy val idToURI = new util.HashMap[String,RedisURI](liveMasters.length + 1, 1)
       // Re-use cluster connections so we don't exceed file-handle limit or waste resources.
-      lazy val clusterConnections = new util.HashMap[String,Future[AsyncSaladClusterAPI[CodecType,CodecType]]](liveMasters.length + 1, 1)
+      lazy val clusterConnections = new util.HashMap[String,Future[SaladClusterAPI[CodecType,CodecType]]](liveMasters.length + 1, 1)
       liveMasters.map { master =>
         idToURI.put(master.getNodeId, master.getUri)
         clusterConnections.put(master.getNodeId, getConnection(master.getNodeId))
