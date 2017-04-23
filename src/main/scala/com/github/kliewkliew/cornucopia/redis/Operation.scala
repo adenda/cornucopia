@@ -1,4 +1,4 @@
-package com.github.kliewkliew.cornucopia.kafka
+package com.github.kliewkliew.cornucopia.redis
 
 trait Operation {
   def key: String

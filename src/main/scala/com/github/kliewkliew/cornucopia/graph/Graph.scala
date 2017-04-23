@@ -1,97 +1,56 @@
-package com.github.kliewkliew.cornucopia.kafka
+package com.github.kliewkliew.cornucopia.graph
 
 import java.util
-
-import Config.Consumer.{cornucopiaSource, materializer}
-import com.github.kliewkliew.cornucopia.redis.Connection._
-import akka.stream.{ClosedShape, ThrottleMode}
-//import akka.stream.scaladsl.{Flow, GraphDSL, MergePreferred, Partition, RunnableGraph, Sink}
-import akka.stream.scaladsl.{Flow, GraphDSL, MergePreferred, Partition, RunnableGraph, Sink, Source}
-import akka.stream.scaladsl.Source
-import com.lambdaworks.redis.cluster.models.partitions.RedisClusterNode
-import org.apache.kafka.clients.consumer.ConsumerRecord
 import java.util.concurrent.atomic.AtomicInteger
 
-import com.github.kliewkliew.cornucopia.actors.CornucopiaSource
+import akka.actor._
+import akka.NotUsed
+import akka.io.Udp.SO.Broadcast
+import akka.stream.{ClosedShape, ThrottleMode, FlowShape, Inlet}
+import com.github.kliewkliew.cornucopia.redis.Connection.{CodecType, Salad, getConnection, newSaladAPI}
+import org.slf4j.LoggerFactory
+import org.apache.kafka.clients.consumer.ConsumerRecord
 import com.github.kliewkliew.cornucopia.redis._
 import com.github.kliewkliew.salad.SaladClusterAPI
 import com.lambdaworks.redis.RedisURI
+import com.lambdaworks.redis.cluster.models.partitions.RedisClusterNode
 import com.lambdaworks.redis.models.role.RedisInstance.Role
-import org.slf4j.LoggerFactory
 
 import collection.JavaConverters._
 import scala.collection.mutable
 import scala.collection.JavaConversions._
 import scala.language.implicitConversions
 import scala.concurrent.{ExecutionContext, Future}
+import akka.stream.scaladsl.{Flow, GraphDSL, MergePreferred, Partition, RunnableGraph, Sink, Source}
+import com.github.kliewkliew.cornucopia.kafka.Config // TO-DO: put config someplace else
 
-class Consumer {
-  private type KafkaRecord = ConsumerRecord[String, String]
-  private type ActorRecord = Map[String, String]
+trait CornucopiaGraph {
+  import scala.concurrent.ExecutionContext.Implicits.global
+
   private val logger = LoggerFactory.getLogger(this.getClass)
 
-  /**
-    * Run the graph to process the event stream from Kafka.
-    *
-    * @return
-    */
-  def run = RunnableGraph.fromGraph(GraphDSL.create() { implicit builder =>
-    import GraphDSL.Implicits._
-    import scala.concurrent.ExecutionContext.Implicits.global
+  def partitionEvents(key: String) = key.trim.toLowerCase match {
+    case ADD_MASTER.key     => ADD_MASTER.ordinal
+    case ADD_SLAVE.key      => ADD_SLAVE.ordinal
+    case REMOVE_NODE.key    => REMOVE_NODE.ordinal
+    case RESHARD.key        => RESHARD.ordinal
+    case _                  => UNSUPPORTED.ordinal
+  }
 
-    val in = cornucopiaSource
-    val out = Sink.ignore
-
-    def partitionEvents(key: String) = key.trim.toLowerCase match {
-      case ADD_MASTER.key     => ADD_MASTER.ordinal
-      case ADD_SLAVE.key      => ADD_SLAVE.ordinal
-      case REMOVE_NODE.key    => REMOVE_NODE.ordinal
-      case RESHARD.key        => RESHARD.ordinal
-      case _                  => UNSUPPORTED.ordinal
-    }
-
-    def partitionNodeRemoval(key: String) = key.trim.toLowerCase match {
-      case REMOVE_MASTER.key  => REMOVE_MASTER.ordinal
-      case REMOVE_SLAVE.key   => REMOVE_SLAVE.ordinal
-      case UNSUPPORTED.key    => UNSUPPORTED.ordinal
-    }
-
-    val mergeFeedback = builder.add(MergePreferred[KeyValue](2))
-
-    val partition = builder.add(Partition[KeyValue](
-      5, kv => partitionEvents(kv.key)))
-
-    val kv = builder.add(extractKeyValue)
-
-    val partitionRm = builder.add(Partition[KeyValue](
-      3, kv => partitionNodeRemoval(kv.key)
-    ))
-
-    in ~> kv
-    kv ~> mergeFeedback.preferred
-    mergeFeedback.out  ~> partition
-                          partition.out(ADD_MASTER.ordinal)    ~> streamAddMaster      ~> mergeFeedback.in(0)
-                          partition.out(ADD_SLAVE.ordinal)     ~> streamAddSlave       ~> out
-                          partition.out(REMOVE_NODE.ordinal)   ~> streamRemoveNode     ~> partitionRm
-                                                                                          partitionRm.out(REMOVE_MASTER.ordinal)  ~> mergeFeedback.in(1)
-                                                                                          partitionRm.out(REMOVE_SLAVE.ordinal)   ~> streamRemoveSlave    ~> out
-                                                                                          partitionRm.out(UNSUPPORTED.ordinal)    ~> unsupportedOperation ~> out
-                          partition.out(RESHARD.ordinal)       ~> streamReshard        ~> out
-                          partition.out(UNSUPPORTED.ordinal)   ~> unsupportedOperation ~> out
-
-    ClosedShape
-  }).run()
+  def partitionNodeRemoval(key: String) = key.trim.toLowerCase match {
+    case REMOVE_MASTER.key  => REMOVE_MASTER.ordinal
+    case REMOVE_SLAVE.key   => REMOVE_SLAVE.ordinal
+    case UNSUPPORTED.key    => UNSUPPORTED.ordinal
+  }
 
   /**
     * Stream definitions for the graph.
     */
   // Extract a tuple of the key and value from a Kafka record.
   case class KeyValue(key: String, value: String)
-  private def extractKeyValue = Flow[KafkaRecord]
-    .map[KeyValue](record => KeyValue(record.key, record.value))
 
   // Add a master node to the cluster.
-  private def streamAddMaster(implicit executionContext: ExecutionContext) = Flow[KeyValue]
+  protected def streamAddMaster(implicit executionContext: ExecutionContext) = Flow[KeyValue]
     .map(_.value)
     .map(RedisURI.create)
     .map(newSaladAPI.canonicalizeURI)
@@ -101,7 +60,7 @@ class Consumer {
     .map(_ => KeyValue(RESHARD.key, ""))
 
   // Add a slave node to the cluster, replicating the master that has the fewest slaves.
-  private def streamAddSlave(implicit executionContext: ExecutionContext) = Flow[KeyValue]
+  protected def streamAddSlave(implicit executionContext: ExecutionContext) = Flow[KeyValue]
     .map(_.value)
     .map(RedisURI.create)
     .map(newSaladAPI.canonicalizeURI)
@@ -113,14 +72,14 @@ class Consumer {
     .mapAsync(1)(_ => logTopology)
 
   // Emit a key-value pair indicating the node type and URI.
-  private def streamRemoveNode(implicit executionContext: ExecutionContext) = Flow[KeyValue]
+  protected def streamRemoveNode(implicit executionContext: ExecutionContext) = Flow[KeyValue]
     .map(_.value)
     .map(RedisURI.create)
     .map(newSaladAPI.canonicalizeURI)
     .mapAsync(1)(emitNodeType)
 
   // Remove a slave node from the cluster.
-  private def streamRemoveSlave(implicit executionContext: ExecutionContext) = Flow[KeyValue]
+  protected def streamRemoveSlave(implicit executionContext: ExecutionContext) = Flow[KeyValue]
     .map(_.value)
     .groupedWithin(100, Config.Cornucopia.batchPeriod)
     .mapAsync(1)(forgetNodes)
@@ -130,7 +89,7 @@ class Consumer {
   // Redistribute the hash slots among all nodes in the cluster.
   // Execute slot redistribution at most once per configured interval.
   // Combine multiple requests into one request.
-  private def streamReshard(implicit executionContext: ExecutionContext) = Flow[KeyValue]
+  protected def streamReshard(implicit executionContext: ExecutionContext) = Flow[KeyValue]
     .map(record => Seq(record.value))
     .conflate((seq1, seq2) => seq1 ++ seq2)
     .throttle(1, Config.Cornucopia.minReshardWait, 1, ThrottleMode.Shaping)
@@ -139,7 +98,7 @@ class Consumer {
     .mapAsync(1)(_ => logTopology)
 
   // Throw for keys indicating unsupported operations.
-  private def unsupportedOperation = Flow[KeyValue]
+  protected def unsupportedOperation = Flow[KeyValue]
     .map(record => throw new IllegalArgumentException(s"Unsupported operation ${record.key} for ${record.value}"))
 
   /**
@@ -151,7 +110,7 @@ class Consumer {
     * @tparam T
     * @return The unmodified input value.
     */
-  private def waitForTopologyRefresh[T](passthrough: T)(implicit executionContext: ExecutionContext): Future[T] = Future {
+  protected def waitForTopologyRefresh[T](passthrough: T)(implicit executionContext: ExecutionContext): Future[T] = Future {
     scala.concurrent.blocking(Thread.sleep(Config.Cornucopia.refreshTimeout))
     passthrough
   }
@@ -162,7 +121,7 @@ class Consumer {
     * @param executionContext The thread dispatcher context.
     * @return
     */
-  private def logTopology(implicit executionContext: ExecutionContext): Future[Unit] = {
+  protected def logTopology(implicit executionContext: ExecutionContext): Future[Unit] = {
     implicit val saladAPI = newSaladAPI
     saladAPI.clusterNodes.map { allNodes =>
       val masterNodes = allNodes.filter(Role.MASTER == _.getRole)
@@ -179,7 +138,7 @@ class Consumer {
     * @param executionContext The thread dispatcher context.
     * @return The list of URI if the nodes were met. TODO: emit only the nodes that were successfully added.
     */
-  private def addNodesToCluster(redisURIList: Seq[RedisURI])(implicit executionContext: ExecutionContext): Future[Seq[RedisURI]] = {
+  protected def addNodesToCluster(redisURIList: Seq[RedisURI])(implicit executionContext: ExecutionContext): Future[Seq[RedisURI]] = {
     implicit val saladAPI = newSaladAPI
     saladAPI.clusterNodes.flatMap { allNodes =>
       val getConnectionsToLiveNodes = allNodes.filter(_.isConnected).map(node => getConnection(node.getNodeId))
@@ -203,7 +162,7 @@ class Consumer {
     * @param executionContext The thread dispatcher context.
     * @return Indicate that the n new slaves are replicating the poorest n masters.
     */
-  private def findMasters(redisURIList: Seq[RedisURI])(implicit executionContext: ExecutionContext): Future[Unit] = {
+  protected def findMasters(redisURIList: Seq[RedisURI])(implicit executionContext: ExecutionContext): Future[Unit] = {
     implicit val saladAPI = newSaladAPI
     saladAPI.clusterNodes.flatMap { allNodes =>
       // Node ids for nodes that are currently master nodes but will become slave nodes.
@@ -267,7 +226,7 @@ class Consumer {
     * @param executionContext The thread dispatcher context.
     * @return Indicate that the hash slots were redistributed and the master removed from the cluster.
     */
-  private def removeMasters(withoutNodes: Seq[String])(implicit executionContext: ExecutionContext): Future[Unit] = {
+  protected def removeMasters(withoutNodes: Seq[String])(implicit executionContext: ExecutionContext): Future[Unit] = {
     val reshardDone = reshardCluster(withoutNodes).map { _ =>
       scala.concurrent.blocking(Thread.sleep(Config.Cornucopia.gracePeriod)) // Allow data to migrate.
     }
@@ -282,33 +241,33 @@ class Consumer {
     * @return A future indicating that the node was forgotten by all nodes in the cluster.
     */
   def forgetNodes(withoutNodes: Seq[String])(implicit executionContext: ExecutionContext): Future[Unit] =
-  if (!withoutNodes.exists(_.nonEmpty))
-    Future(Unit)
-  else {
-    implicit val saladAPI = newSaladAPI
-    saladAPI.clusterNodes.flatMap { allNodes =>
-      logger.info(s"Forgetting nodes: $withoutNodes")
-      // Reset the nodes to be removed.
-      val validWithoutNodes = withoutNodes.filter(_.nonEmpty)
-      validWithoutNodes.map(getConnection).map(_.map(_.clusterReset(true)))
+    if (!withoutNodes.exists(_.nonEmpty))
+      Future(Unit)
+    else {
+      implicit val saladAPI = newSaladAPI
+      saladAPI.clusterNodes.flatMap { allNodes =>
+        logger.info(s"Forgetting nodes: $withoutNodes")
+        // Reset the nodes to be removed.
+        val validWithoutNodes = withoutNodes.filter(_.nonEmpty)
+        validWithoutNodes.map(getConnection).map(_.map(_.clusterReset(true)))
 
-      // The nodes that will remain in the cluster should forget the nodes that will be removed.
-      val withNodes = allNodes
-        .filterNot(node => validWithoutNodes.contains(node.getNodeId)) // Node cannot forget itself.
+        // The nodes that will remain in the cluster should forget the nodes that will be removed.
+        val withNodes = allNodes
+          .filterNot(node => validWithoutNodes.contains(node.getNodeId)) // Node cannot forget itself.
 
-      // For the cross product of `withNodes` and `withoutNodes`; to remove the nodes in `withoutNodes`.
-      val forgetResults = for {
-        operatorNode <- withNodes
-        operandNodeId <- validWithoutNodes
-      } yield {
-        if (operatorNode.getSlaveOf == operandNodeId)
-          Future(Unit) // Node cannot forget its master.
-        else
-          getConnection(operatorNode.getNodeId).flatMap(_.clusterForget(operandNodeId))
+        // For the cross product of `withNodes` and `withoutNodes`; to remove the nodes in `withoutNodes`.
+        val forgetResults = for {
+          operatorNode <- withNodes
+          operandNodeId <- validWithoutNodes
+        } yield {
+          if (operatorNode.getSlaveOf == operandNodeId)
+            Future(Unit) // Node cannot forget its master.
+          else
+            getConnection(operatorNode.getNodeId).flatMap(_.clusterForget(operandNodeId))
+        }
+        Future.sequence(forgetResults).map(x => x)
       }
-      Future.sequence(forgetResults).map(x => x)
     }
-  }
 
   /**
     * Reshard the cluster using a view of the cluster consisting of a subset of master nodes.
@@ -316,7 +275,7 @@ class Consumer {
     * @param withoutNodes The list of ids of nodes that will not be assigned hash slots.
     * @return Boolean indicating that all hash slots were reassigned successfully.
     */
-  private def reshardCluster(withoutNodes: Seq[String])
+  protected def reshardCluster(withoutNodes: Seq[String])
   : Future[Unit] = {
     // Execute futures using a thread pool so we don't run out of memory due to futures.
     implicit val executionContext = Config.Consumer.actorSystem.dispatchers.lookup("akka.actor.resharding-dispatcher")
@@ -372,7 +331,7 @@ class Consumer {
     * @param masters The list of masters that can be assigned slots.
     * @return The node id of the chosen master.
     */
-  private def slotNode(slot: Int, masters: mutable.Buffer[RedisClusterNode]): String =
+  protected def slotNode(slot: Int, masters: mutable.Buffer[RedisClusterNode]): String =
     masters(slot % masters.length).getNodeId
 
   /**
@@ -387,7 +346,7 @@ class Consumer {
     * @param executionContext The thread dispatcher context.
     * @return Future indicating success.
     */
-  private def migrateSlot(slot: Int, sourceNodeId: String, destinationNodeId: String, destinationURI: RedisURI,
+  protected def migrateSlot(slot: Int, sourceNodeId: String, destinationNodeId: String, destinationURI: RedisURI,
                           masters: mutable.Buffer[RedisClusterNode],
                           clusterConnections: util.HashMap[String,Future[SaladClusterAPI[CodecType,CodecType]]])
                          (implicit saladAPI: Salad, executionContext: ExecutionContext)
@@ -440,7 +399,7 @@ class Consumer {
     * @param executionContext The thread dispatcher context.
     * @return Future indicating success.
     */
-  private def notifySlotAssignment(slot: Int, masters: mutable.Buffer[RedisClusterNode])
+  protected def notifySlotAssignment(slot: Int, masters: mutable.Buffer[RedisClusterNode])
                                   (implicit saladAPI: Salad, executionContext: ExecutionContext)
   : Future[Unit] = {
     val getMasterConnections = masters.map(master => getConnection(master.getNodeId))
@@ -479,5 +438,98 @@ class Consumer {
         underlying.enqueue(entry)
       }
   }
+}
+
+class CornucopiaKafkaSource extends CornucopiaGraph {
+  import com.github.kliewkliew.cornucopia.kafka.Config.Consumer.materializer
+
+  private type KafkaRecord = ConsumerRecord[String, String]
+
+  private def extractKeyValue = Flow[KafkaRecord]
+    .map[KeyValue](record => KeyValue(record.key, record.value))
+
+  def run = RunnableGraph.fromGraph(GraphDSL.create() { implicit builder =>
+    import scala.concurrent.ExecutionContext.Implicits.global
+    import GraphDSL.Implicits._
+
+    val in = Config.Consumer.cornucopiaKafkaSource
+    val out = Sink.ignore
+
+    val mergeFeedback = builder.add(MergePreferred[KeyValue](2))
+
+    val partition = builder.add(Partition[KeyValue](
+      5, kv => partitionEvents(kv.key)))
+
+    val kv = builder.add(extractKeyValue)
+
+    val partitionRm = builder.add(Partition[KeyValue](
+      3, kv => partitionNodeRemoval(kv.key)
+    ))
+
+    in                                      ~> kv
+    kv                                      ~> mergeFeedback.preferred
+    mergeFeedback.out                       ~> partition
+    partition.out(ADD_MASTER.ordinal)       ~> streamAddMaster      ~> mergeFeedback.in(0)
+    partition.out(ADD_SLAVE.ordinal)        ~> streamAddSlave       ~> out
+    partition.out(REMOVE_NODE.ordinal)      ~> streamRemoveNode     ~> partitionRm
+    partitionRm.out(REMOVE_MASTER.ordinal)  ~> mergeFeedback.in(1)
+    partitionRm.out(REMOVE_SLAVE.ordinal)   ~> streamRemoveSlave    ~> out
+    partitionRm.out(UNSUPPORTED.ordinal)    ~> unsupportedOperation ~> out
+    partition.out(RESHARD.ordinal)          ~> streamReshard        ~> out
+    partition.out(UNSUPPORTED.ordinal)      ~> unsupportedOperation ~> out
+
+    ClosedShape
+  }).run()
+
+}
+
+class CornucopiaActorSource extends CornucopiaGraph {
+  import com.github.kliewkliew.cornucopia.kafka.Config.Consumer.materializer
+  import com.github.kliewkliew.cornucopia.actors.CornucopiaSource.Task
+  import scala.concurrent.ExecutionContext.Implicits.global
+
+  private type ActorRecord = Task
+
+  private def extractKeyValue = Flow[ActorRecord]
+    .map[KeyValue](record => KeyValue(record.operation, record.redisNodeIp))
+
+  private val processTask = Flow.fromGraph(GraphDSL.create() { implicit builder =>
+    import GraphDSL.Implicits._
+
+    val taskSource = builder.add(Flow[Task])
+
+    val mergeFeedback = builder.add(MergePreferred[KeyValue](2))
+
+    val partition = builder.add(Partition[KeyValue](
+      5, kv => partitionEvents(kv.key)))
+
+    val kv = builder.add(extractKeyValue)
+
+    val partitionRm = builder.add(Partition[KeyValue](
+      3, kv => partitionNodeRemoval(kv.key)
+    ))
+
+    val out = builder.add(Flow[Any])
+
+    taskSource.out                          ~> kv
+    kv                                      ~> mergeFeedback.preferred
+    mergeFeedback.out                       ~> partition
+    partition.out(ADD_MASTER.ordinal)       ~> streamAddMaster      ~> mergeFeedback.in(0)
+    partition.out(ADD_SLAVE.ordinal)        ~> streamAddSlave       ~> out
+    partition.out(REMOVE_NODE.ordinal)      ~> streamRemoveNode     ~> partitionRm
+    partitionRm.out(REMOVE_MASTER.ordinal)  ~> mergeFeedback.in(1)
+    partitionRm.out(REMOVE_SLAVE.ordinal)   ~> streamRemoveSlave    ~> out
+    partitionRm.out(UNSUPPORTED.ordinal)    ~> unsupportedOperation ~> out
+    partition.out(RESHARD.ordinal)          ~> streamReshard        ~> out
+    partition.out(UNSUPPORTED.ordinal)      ~> unsupportedOperation ~> out
+
+    FlowShape(taskSource.in, out.out)
+  })
+
+  private val cornucopiaSource = Config.Consumer.cornucopiaActorSource
+
+  def ref: ActorRef = processTask
+    .to(Sink.ignore)
+    .runWith(cornucopiaSource)
 
 }

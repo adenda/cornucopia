@@ -1,9 +1,11 @@
 package com.github.kliewkliew.cornucopia.kafka
 
 import akka.actor.ActorSystem
+import akka.stream.scaladsl.Source
 import akka.kafka.scaladsl.{Producer, Consumer => ConsumerDSL}
 import akka.kafka.{ConsumerSettings, ProducerSettings, Subscriptions}
-import akka.stream.{ActorMaterializer, ActorMaterializerSettings, Supervision}
+import akka.stream.{ActorMaterializer, ActorMaterializerSettings, ClosedShape, Supervision}
+import com.github.kliewkliew.cornucopia.actors.CornucopiaSource
 import com.typesafe.config.ConfigFactory
 import org.apache.kafka.common.serialization.{StringDeserializer, StringSerializer}
 import org.slf4j.LoggerFactory
@@ -17,6 +19,7 @@ object Config {
     val gracePeriod = config.getInt("grace.period") * 1000
     val refreshTimeout = config.getInt("refresh.timeout") * 1000
     val batchPeriod = config.getInt("batch.period").seconds
+    val source = config.getString("source")
   }
 
   object Consumer {
@@ -43,7 +46,14 @@ object Config {
       .withBootstrapServers(kafkaServers)
 
     implicit val materializer = ActorMaterializer(materializerSettings)(actorSystem)
+
+    val cornucopiaActorProps = CornucopiaSource.props
+    val cornucopiaActorSource = Source.actorPublisher[CornucopiaSource.Task](cornucopiaActorProps)
+
+    val cornucopiaKafkaSource = ConsumerDSL.plainSource(sourceSettings, subscription)
+
     val cornucopiaSource = ConsumerDSL.plainSource(sourceSettings, subscription)
+
     val cornucopiaSink = Producer.plainSink(sinkSettings)
   }
 
