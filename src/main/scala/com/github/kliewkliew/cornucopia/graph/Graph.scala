@@ -50,7 +50,7 @@ trait CornucopiaGraph {
   case class KeyValue(key: String, value: String)
 
   // Add a master node to the cluster.
-  protected def streamAddMaster(implicit executionContext: ExecutionContext) = Flow[KeyValue]
+  def streamAddMaster(implicit executionContext: ExecutionContext) = Flow[KeyValue]
     .map(_.value)
     .map(RedisURI.create)
     .map(newSaladAPI.canonicalizeURI)
@@ -488,12 +488,12 @@ class CornucopiaActorSource extends CornucopiaGraph {
   import com.github.kliewkliew.cornucopia.actors.CornucopiaSource.Task
   import scala.concurrent.ExecutionContext.Implicits.global
 
-  private type ActorRecord = Task
+  protected type ActorRecord = Task
 
-  private def extractKeyValue = Flow[ActorRecord]
+  protected def extractKeyValue = Flow[ActorRecord]
     .map[KeyValue](record => KeyValue(record.operation, record.redisNodeIp))
 
-  private val processTask = Flow.fromGraph(GraphDSL.create() { implicit builder =>
+  protected val processTask = Flow.fromGraph(GraphDSL.create() { implicit builder =>
     import GraphDSL.Implicits._
 
     val taskSource = builder.add(Flow[Task])
@@ -515,18 +515,18 @@ class CornucopiaActorSource extends CornucopiaGraph {
     kv                                      ~> mergeFeedback.preferred
     mergeFeedback.out                       ~> partition
     partition.out(ADD_MASTER.ordinal)       ~> streamAddMaster      ~> mergeFeedback.in(0)
-    partition.out(ADD_SLAVE.ordinal)        ~> streamAddSlave       ~> out
+    partition.out(ADD_SLAVE.ordinal)        ~> streamAddSlave
     partition.out(REMOVE_NODE.ordinal)      ~> streamRemoveNode     ~> partitionRm
     partitionRm.out(REMOVE_MASTER.ordinal)  ~> mergeFeedback.in(1)
-    partitionRm.out(REMOVE_SLAVE.ordinal)   ~> streamRemoveSlave    ~> out
-    partitionRm.out(UNSUPPORTED.ordinal)    ~> unsupportedOperation ~> out
-    partition.out(RESHARD.ordinal)          ~> streamReshard        ~> out
-    partition.out(UNSUPPORTED.ordinal)      ~> unsupportedOperation ~> out
+    partitionRm.out(REMOVE_SLAVE.ordinal)   ~> streamRemoveSlave
+    partitionRm.out(UNSUPPORTED.ordinal)    ~> unsupportedOperation
+    partition.out(RESHARD.ordinal)          ~> streamReshard
+    partition.out(UNSUPPORTED.ordinal)      ~> unsupportedOperation
 
     FlowShape(taskSource.in, out.out)
   })
 
-  private val cornucopiaSource = Config.Consumer.cornucopiaActorSource
+  protected val cornucopiaSource = Config.Consumer.cornucopiaActorSource
 
   def ref: ActorRef = processTask
     .to(Sink.ignore)
