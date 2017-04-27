@@ -56,7 +56,7 @@ trait CornucopiaGraph {
     .map(newSaladAPI.canonicalizeURI)
     .groupedWithin(100, Config.Cornucopia.batchPeriod)
     .mapAsync(1)(addNodesToCluster)
-    .mapAsync(1)(waitForTopologyRefresh)
+    .mapAsync(1)(waitForTopologyRefresh[Seq[RedisURI]])
     .map(_ => KeyValue(RESHARD.key, ""))
 
   // Add a slave node to the cluster, replicating the master that has the fewest slaves.
@@ -66,9 +66,9 @@ trait CornucopiaGraph {
     .map(newSaladAPI.canonicalizeURI)
     .groupedWithin(100, Config.Cornucopia.batchPeriod)
     .mapAsync(1)(addNodesToCluster)
-    .mapAsync(1)(waitForTopologyRefresh)
+    .mapAsync(1)(waitForTopologyRefresh[Seq[RedisURI]])
     .mapAsync(1)(findMasters)
-    .mapAsync(1)(waitForTopologyRefresh)
+    .mapAsync(1)(waitForTopologyRefresh[Unit])
     .mapAsync(1)(_ => logTopology)
 
   // Emit a key-value pair indicating the node type and URI.
@@ -83,7 +83,7 @@ trait CornucopiaGraph {
     .map(_.value)
     .groupedWithin(100, Config.Cornucopia.batchPeriod)
     .mapAsync(1)(forgetNodes)
-    .mapAsync(1)(waitForTopologyRefresh)
+    .mapAsync(1)(waitForTopologyRefresh[Unit])
     .mapAsync(1)(_ => logTopology)
 
   // Redistribute the hash slots among all nodes in the cluster.
@@ -94,7 +94,7 @@ trait CornucopiaGraph {
     .conflate((seq1, seq2) => seq1 ++ seq2)
     .throttle(1, Config.Cornucopia.minReshardWait, 1, ThrottleMode.Shaping)
     .mapAsync(1)(reshardCluster)
-    .mapAsync(1)(waitForTopologyRefresh)
+    .mapAsync(1)(waitForTopologyRefresh[Unit])
     .mapAsync(1)(_ => logTopology)
 
   // Throw for keys indicating unsupported operations.
