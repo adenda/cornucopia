@@ -4,9 +4,7 @@ import java.util
 import java.util.concurrent.atomic.AtomicInteger
 
 import akka.actor._
-import akka.NotUsed
-import akka.io.Udp.SO.Broadcast
-import akka.stream.{ClosedShape, ThrottleMode, FlowShape, Inlet}
+import akka.stream.{ClosedShape, FlowShape, ThrottleMode}
 import com.github.kliewkliew.cornucopia.redis.Connection.{CodecType, Salad, getConnection, newSaladAPI}
 import org.slf4j.LoggerFactory
 import org.apache.kafka.clients.consumer.ConsumerRecord
@@ -21,8 +19,9 @@ import scala.collection.mutable
 import scala.collection.JavaConversions._
 import scala.language.implicitConversions
 import scala.concurrent.{ExecutionContext, Future}
-import akka.stream.scaladsl.{Flow, GraphDSL, MergePreferred, Partition, RunnableGraph, Sink, Source, Merge}
-import com.github.kliewkliew.cornucopia.kafka.Config // TO-DO: put config someplace else
+import akka.stream.scaladsl.{Flow, GraphDSL, Merge, MergePreferred, Partition, RunnableGraph, Sink}
+import com.github.kliewkliew.cornucopia.Config
+// TO-DO: put config someplace else
 
 trait CornucopiaGraph {
   import scala.concurrent.ExecutionContext.Implicits.global
@@ -441,7 +440,7 @@ trait CornucopiaGraph {
 }
 
 class CornucopiaKafkaSource extends CornucopiaGraph {
-  import com.github.kliewkliew.cornucopia.kafka.Config.Consumer.materializer
+  import Config.Consumer.materializer
 
   private type KafkaRecord = ConsumerRecord[String, String]
 
@@ -484,7 +483,7 @@ class CornucopiaKafkaSource extends CornucopiaGraph {
 }
 
 class CornucopiaActorSource extends CornucopiaGraph {
-  import com.github.kliewkliew.cornucopia.kafka.Config.Consumer.materializer
+  import Config.Consumer.materializer
   import com.github.kliewkliew.cornucopia.actors.CornucopiaSource.Task
   import scala.concurrent.ExecutionContext.Implicits.global
 

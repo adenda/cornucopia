@@ -20,7 +20,7 @@ class LibraryTest extends TestKit(ActorSystem("LibraryTest"))
   with WordSpecLike with BeforeAndAfterAll with MustMatchers with MockitoSugar {
 
   trait FakeCornucopiaActorSourceGraph {
-    import com.github.kliewkliew.cornucopia.kafka.Config.Consumer.materializer
+    import Config.Consumer.materializer
 
     class CornucopiaActorSourceLocal extends CornucopiaActorSource {
       lazy val probe = TestProbe()

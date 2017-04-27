@@ -1,10 +1,10 @@
-package com.github.kliewkliew.cornucopia.kafka
+package com.github.kliewkliew.cornucopia
 
 import akka.actor.ActorSystem
-import akka.stream.scaladsl.Source
 import akka.kafka.scaladsl.{Producer, Consumer => ConsumerDSL}
 import akka.kafka.{ConsumerSettings, ProducerSettings, Subscriptions}
-import akka.stream.{ActorMaterializer, ActorMaterializerSettings, ClosedShape, Supervision}
+import akka.stream.scaladsl.Source
+import akka.stream.{ActorMaterializer, ActorMaterializerSettings, Supervision}
 import com.github.kliewkliew.cornucopia.actors.CornucopiaSource
 import com.typesafe.config.ConfigFactory
 import org.apache.kafka.common.serialization.{StringDeserializer, StringSerializer}
