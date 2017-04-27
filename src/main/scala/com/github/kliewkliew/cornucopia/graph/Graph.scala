@@ -21,7 +21,7 @@ import scala.collection.mutable
 import scala.collection.JavaConversions._
 import scala.language.implicitConversions
 import scala.concurrent.{ExecutionContext, Future}
-import akka.stream.scaladsl.{Flow, GraphDSL, MergePreferred, Partition, RunnableGraph, Sink, Source}
+import akka.stream.scaladsl.{Flow, GraphDSL, MergePreferred, Partition, RunnableGraph, Sink, Source, Merge}
 import com.github.kliewkliew.cornucopia.kafka.Config // TO-DO: put config someplace else
 
 trait CornucopiaGraph {
@@ -509,21 +509,21 @@ class CornucopiaActorSource extends CornucopiaGraph {
       3, kv => partitionNodeRemoval(kv.key)
     ))
 
-    val out = builder.add(Flow[Any])
+    val fanOut = builder.add(Merge[Any](5))
 
     taskSource.out                          ~> kv
     kv                                      ~> mergeFeedback.preferred
     mergeFeedback.out                       ~> partition
     partition.out(ADD_MASTER.ordinal)       ~> streamAddMaster      ~> mergeFeedback.in(0)
-    partition.out(ADD_SLAVE.ordinal)        ~> streamAddSlave
+    partition.out(ADD_SLAVE.ordinal)        ~> streamAddSlave       ~> fanOut.in(0)
     partition.out(REMOVE_NODE.ordinal)      ~> streamRemoveNode     ~> partitionRm
     partitionRm.out(REMOVE_MASTER.ordinal)  ~> mergeFeedback.in(1)
-    partitionRm.out(REMOVE_SLAVE.ordinal)   ~> streamRemoveSlave
-    partitionRm.out(UNSUPPORTED.ordinal)    ~> unsupportedOperation
-    partition.out(RESHARD.ordinal)          ~> streamReshard
-    partition.out(UNSUPPORTED.ordinal)      ~> unsupportedOperation
+    partitionRm.out(REMOVE_SLAVE.ordinal)   ~> streamRemoveSlave    ~> fanOut.in(1)
+    partitionRm.out(UNSUPPORTED.ordinal)    ~> unsupportedOperation ~> fanOut.in(2)
+    partition.out(RESHARD.ordinal)          ~> streamReshard        ~> fanOut.in(3)
+    partition.out(UNSUPPORTED.ordinal)      ~> unsupportedOperation ~> fanOut.in(4)
 
-    FlowShape(taskSource.in, out.out)
+    FlowShape(taskSource.in, fanOut.out)
   })
 
   protected val cornucopiaSource = Config.Consumer.cornucopiaActorSource
