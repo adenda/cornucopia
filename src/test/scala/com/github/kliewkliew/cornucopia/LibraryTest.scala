@@ -26,8 +26,11 @@ class LibraryTest extends TestKit(ActorSystem("LibraryTest"))
       lazy val probe = TestProbe()
 
       override def streamAddMaster(implicit executionContext: ExecutionContext) =
-        Flow[KeyValue].map(_ => {
+        Flow[KeyValue].map(kv => {
+          val ip = kv.value
           probe.ref ! "streamAddMaster"
+          Thread.sleep(300)
+          probe.ref ! ip
           Thread.sleep(300)
           KeyValue("*reshard", "")
         })
@@ -64,11 +67,15 @@ class LibraryTest extends TestKit(ActorSystem("LibraryTest"))
 
       private val ref = cornucopiaActorSourceLocal.ref
 
-      ref ! Task("+master", "123.456.789.10")
+      private val redisUri = "redis://123.456.789.10"
+
+      ref ! Task("+master", redisUri)
 
       cornucopiaActorSourceLocal.probe.expectMsg(100 millis, "streamAddMaster")
 
-      cornucopiaActorSourceLocal.probe.expectMsg(350 millis, "streamReshard")
+      cornucopiaActorSourceLocal.probe.expectMsg(350 millis, redisUri)
+
+      cornucopiaActorSourceLocal.probe.expectMsg(700 millis, "streamReshard")
     }
   }
 
