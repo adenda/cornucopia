@@ -12,7 +12,7 @@ import scala.annotation.tailrec
 object CornucopiaSource {
   def props: Props = Props[CornucopiaSource]
 
-  final case class Task(operation: String, redisNodeIp: String)
+  final case class Task(operation: String, redisNodeIp: String, ref: Option[ActorRef] = None)
   case object TaskAccepted
   case object TaskDenied
 }
@@ -28,10 +28,13 @@ class CornucopiaSource extends ActorPublisher[CornucopiaSource.Task] {
     case _: Task if buf.size == MaxBufferSize =>
       sender() ! TaskDenied
     case task: Task =>
-      sender() ! TaskAccepted
-      if (buf.isEmpty && totalDemand > 0) onNext(task)
+      if (buf.isEmpty && totalDemand > 0) {
+        val task2 = task.copy(ref = Some(sender))
+        onNext(task2)
+      }
       else {
-        buf :+= task
+        val task2 = task.copy(ref = Some(sender))
+        buf :+= task2
         deliverBuf()
       }
     case Request(_) =>
@@ -45,11 +48,11 @@ class CornucopiaSource extends ActorPublisher[CornucopiaSource.Task] {
       if (totalDemand <= Int.MaxValue) {
         val (use, keep) = buf.splitAt(totalDemand.toInt)
         buf = keep
-        use foreach onNext
+        use foreach(task => onNext(task))
       } else {
         val (use, keep) = buf.splitAt(Int.MaxValue)
         buf = keep
-        use foreach onNext
+        use foreach(task => onNext(task))
         deliverBuf()
       }
     }

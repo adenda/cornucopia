@@ -19,7 +19,7 @@ import scala.collection.mutable
 import scala.collection.JavaConversions._
 import scala.language.implicitConversions
 import scala.concurrent.{ExecutionContext, Future}
-import akka.stream.scaladsl.{Flow, GraphDSL, Merge, MergePreferred, Partition, RunnableGraph, Sink}
+import akka.stream.scaladsl.{Flow, GraphDSL, Merge, MergePreferred, Partition, RunnableGraph, Sink, Broadcast}
 import com.github.kliewkliew.cornucopia.Config
 // TO-DO: put config someplace else
 
@@ -46,7 +46,7 @@ trait CornucopiaGraph {
     * Stream definitions for the graph.
     */
   // Extract a tuple of the key and value from a Kafka record.
-  case class KeyValue(key: String, value: String)
+  case class KeyValue(key: String, value: String, senderRef: Option[ActorRef] = None)
 
   // Add a master node to the cluster.
   def streamAddMaster(implicit executionContext: ExecutionContext) = Flow[KeyValue]
@@ -69,6 +69,7 @@ trait CornucopiaGraph {
     .mapAsync(1)(findMasters)
     .mapAsync(1)(waitForTopologyRefresh[Unit])
     .mapAsync(1)(_ => logTopology)
+    .map(_ => KeyValue("", ""))
 
   // Emit a key-value pair indicating the node type and URI.
   protected def streamRemoveNode(implicit executionContext: ExecutionContext) = Flow[KeyValue]
@@ -84,6 +85,7 @@ trait CornucopiaGraph {
     .mapAsync(1)(forgetNodes)
     .mapAsync(1)(waitForTopologyRefresh[Unit])
     .mapAsync(1)(_ => logTopology)
+    .map(_ => KeyValue("", ""))
 
   // Redistribute the hash slots among all nodes in the cluster.
   // Execute slot redistribution at most once per configured interval.
@@ -95,6 +97,7 @@ trait CornucopiaGraph {
     .mapAsync(1)(reshardCluster)
     .mapAsync(1)(waitForTopologyRefresh[Unit])
     .mapAsync(1)(_ => logTopology)
+    .map(_ => KeyValue("", ""))
 
   // Throw for keys indicating unsupported operations.
   protected def unsupportedOperation = Flow[KeyValue]
@@ -112,6 +115,22 @@ trait CornucopiaGraph {
   protected def waitForTopologyRefresh[T](passthrough: T)(implicit executionContext: ExecutionContext): Future[T] = Future {
     scala.concurrent.blocking(Thread.sleep(Config.Cornucopia.refreshTimeout))
     passthrough
+  }
+
+  /**
+    * Wait for the new cluster topology view to propagate to all nodes in the cluster. Same version as above, but this
+    * time takes two passthroughs and returns tuple of them as future.
+    *
+    * @param passthrough1 The first value that will be passed through to the next map stage.
+    * @param passthrough2 The second value that will be passed through to the next map stage.
+    * @param executionContext The thread dispatcher context.
+    * @tparam T
+    * @tparam U
+    * @return The unmodified input value.
+    */
+  protected def waitForTopologyRefresh2[T, U](passthrough1: T, passthrough2: U)(implicit executionContext: ExecutionContext): Future[(T, U)] = Future {
+    scala.concurrent.blocking(Thread.sleep(Config.Cornucopia.refreshTimeout))
+    (passthrough1, passthrough2)
   }
 
   /**
@@ -269,9 +288,10 @@ trait CornucopiaGraph {
     }
 
   /**
-    * Reshard the cluster using a view of the cluster consisting of a subset of master nodes.
+    * Reshard the cluster using a view of thecluster consisting of a subset of master nodes.
     *
-    * @param withoutNodes The list of ids of nodes that will not be assigned hash slots.
+    * @param withoutNodes The list of ids of nodes that will not be assigned hash slots. Note that this is not used
+    *                     (it is empty) when we add a new master node and reshard.
     * @return Boolean indicating that all hash slots were reassigned successfully.
     */
   protected def reshardCluster(withoutNodes: Seq[String])
@@ -442,6 +462,8 @@ trait CornucopiaGraph {
 class CornucopiaKafkaSource extends CornucopiaGraph {
   import Config.Consumer.materializer
 
+  implicit val newSaladAPIimpl: Salad = newSaladAPI
+
   private type KafkaRecord = ConsumerRecord[String, String]
 
   private def extractKeyValue = Flow[KafkaRecord]
@@ -482,15 +504,57 @@ class CornucopiaKafkaSource extends CornucopiaGraph {
 
 }
 
-class CornucopiaActorSource extends CornucopiaGraph {
+class CornucopiaActorSource(implicit newSaladAPIimpl: Salad) extends CornucopiaGraph {
   import Config.Consumer.materializer
   import com.github.kliewkliew.cornucopia.actors.CornucopiaSource.Task
   import scala.concurrent.ExecutionContext.Implicits.global
 
   protected type ActorRecord = Task
 
+  // Add a master node to the cluster.
+  def streamAddMasterPrime(implicit executionContext: ExecutionContext, newSaladAPIimpl: Connection.Salad) = Flow[KeyValue]
+    .map(kv => (kv.value, kv.senderRef))
+    .map(t => (RedisURI.create(t._1), t._2) )
+    .map(t => (newSaladAPIimpl.canonicalizeURI(t._1), t._2))
+    .groupedWithin(1, Config.Cornucopia.batchPeriod)
+    .mapAsync(1)(t => {
+      val t1 = t.unzip
+      val redisURIs = t1._1
+      val actorRefs = t1._2
+      waitForTopologyRefresh2[Seq[RedisURI], Seq[Option[ActorRef]]](redisURIs, actorRefs)
+    })
+    .map{ case (_, actorRef) =>
+      val ref = actorRef.head
+      KeyValue(RESHARD.key, "", ref)
+    }
+
+  override protected def streamReshard(implicit executionContext: ExecutionContext) = Flow[KeyValue]
+    .map(record => Seq( record.senderRef ))
+    .conflate((seq1, seq2) => seq1 ++ seq2 )
+    .throttle(1, Config.Cornucopia.minReshardWait, 1, ThrottleMode.Shaping)
+    .mapAsync(1)(reshardClusterPrime)
+    .mapAsync(1)(waitForTopologyRefresh[Unit])
+    .mapAsync(1)(_ => logTopology)
+    .map(_ => KeyValue("", ""))
+
+  private def reshardClusterPrime(senders: Seq[Option[ActorRef]]): Future[Unit] = {
+
+    def reshard(ref: ActorRef): Future[Unit] = {
+      reshardCluster(Seq()) map { _: Unit =>
+        ref ! "OK"
+      } recover {
+        case ex: Throwable => ref ! s"ERROR: ${ex.toString}"
+      }
+    }
+
+    val flattened = senders.flatten
+
+    if (flattened.size == 0) Future(Unit)
+    else Future.reduce(senders.flatten.map(reshard))((_, _) => Unit)
+  }
+
   protected def extractKeyValue = Flow[ActorRecord]
-    .map[KeyValue](record => KeyValue(record.operation, record.redisNodeIp))
+    .map[KeyValue](record => KeyValue(record.operation, record.redisNodeIp, record.ref))
 
   protected val processTask = Flow.fromGraph(GraphDSL.create() { implicit builder =>
     import GraphDSL.Implicits._
@@ -508,21 +572,28 @@ class CornucopiaActorSource extends CornucopiaGraph {
       3, kv => partitionNodeRemoval(kv.key)
     ))
 
-    val fanOut = builder.add(Merge[Any](5))
+    val broadcastSender = builder.add(Broadcast[KeyValue](2))
 
-    taskSource.out                          ~> kv
-    kv                                      ~> mergeFeedback.preferred
+    val senderMerge = builder.add(Merge[KeyValue](2))
+
+    val fanIn = builder.add(Merge[KeyValue](5))
+
+    taskSource.out                          ~> kv                   ~> broadcastSender
+    broadcastSender                         ~> mergeFeedback.preferred
+    broadcastSender                         ~> senderMerge
     mergeFeedback.out                       ~> partition
-    partition.out(ADD_MASTER.ordinal)       ~> streamAddMaster      ~> mergeFeedback.in(0)
-    partition.out(ADD_SLAVE.ordinal)        ~> streamAddSlave       ~> fanOut.in(0)
+    partition.out(ADD_MASTER.ordinal)       ~> streamAddMasterPrime ~> mergeFeedback.in(0)
+    partition.out(ADD_SLAVE.ordinal)        ~> streamAddSlave       ~> fanIn
     partition.out(REMOVE_NODE.ordinal)      ~> streamRemoveNode     ~> partitionRm
     partitionRm.out(REMOVE_MASTER.ordinal)  ~> mergeFeedback.in(1)
-    partitionRm.out(REMOVE_SLAVE.ordinal)   ~> streamRemoveSlave    ~> fanOut.in(1)
-    partitionRm.out(UNSUPPORTED.ordinal)    ~> unsupportedOperation ~> fanOut.in(2)
-    partition.out(RESHARD.ordinal)          ~> streamReshard        ~> fanOut.in(3)
-    partition.out(UNSUPPORTED.ordinal)      ~> unsupportedOperation ~> fanOut.in(4)
+    partitionRm.out(REMOVE_SLAVE.ordinal)   ~> streamRemoveSlave    ~> fanIn
+    partitionRm.out(UNSUPPORTED.ordinal)    ~> unsupportedOperation ~> fanIn
+    partition.out(RESHARD.ordinal)          ~> streamReshard        ~> fanIn
+    partition.out(UNSUPPORTED.ordinal)      ~> unsupportedOperation ~> fanIn
 
-    FlowShape(taskSource.in, fanOut.out)
+    fanIn ~> senderMerge
+
+    FlowShape(taskSource.in, senderMerge.out)
   })
 
   protected val cornucopiaSource = Config.Consumer.cornucopiaActorSource
