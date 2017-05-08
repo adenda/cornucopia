@@ -55,6 +55,8 @@ class LibraryTest extends TestKit(ActorSystem("LibraryTest"))
         (passthrough1, passthrough2)
       }
 
+      override protected def logTopology(implicit executionContext: ExecutionContext): Future[Unit] = Future(Unit)
+
       override protected def reshardCluster(withoutNodes: Seq[String]): Future[Unit] = Future(Unit)
 
     }
