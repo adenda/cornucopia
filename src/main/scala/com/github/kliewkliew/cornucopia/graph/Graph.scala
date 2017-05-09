@@ -541,9 +541,9 @@ class CornucopiaActorSource(implicit newSaladAPIimpl: Salad) extends CornucopiaG
 
     def reshard(ref: ActorRef): Future[Unit] = {
       reshardCluster(Seq()) map { _: Unit =>
-        ref ! "OK"
+        ref ! Right("OK")
       } recover {
-        case ex: Throwable => ref ! s"ERROR: ${ex.toString}"
+        case ex: Throwable => ref ! Left(s"ERROR: ${ex.toString}")
       }
     }
 

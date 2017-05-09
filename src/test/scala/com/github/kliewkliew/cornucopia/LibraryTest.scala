@@ -84,7 +84,7 @@ class LibraryTest extends TestKit(ActorSystem("LibraryTest"))
       future.onComplete {
         case Failure(_) => assert(false)
         case Success(msg) =>
-          assert(msg == "OK")
+          assert(msg == Right("OK"))
       }
 
       Await.ready(future, timeout.duration)
