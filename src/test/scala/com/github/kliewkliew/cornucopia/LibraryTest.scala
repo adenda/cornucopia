@@ -50,6 +50,11 @@ class LibraryTest extends TestKit(ActorSystem("LibraryTest"))
       override def streamRemoveSlave(implicit executionContext: ExecutionContext) =
         Flow[KeyValue].map(_ => KeyValue("test", ""))
 
+      override protected def waitForTopologyRefresh[T](passthrough: T)
+                                                      (implicit executionContext: ExecutionContext): Future[T] = Future {
+        passthrough
+      }
+
       override protected def waitForTopologyRefresh2[T, U](passthrough1: T, passthrough2: U)
                                                  (implicit executionContext: ExecutionContext): Future[(T, U)] = Future {
         (passthrough1, passthrough2)
@@ -63,6 +68,9 @@ class LibraryTest extends TestKit(ActorSystem("LibraryTest"))
                                               (implicit executionContext: ExecutionContext): Future[Seq[RedisURI]] = {
         Future(redisURIList)
       }
+
+      override protected def findMasters(redisURIList: Seq[RedisURI])
+                                        (implicit executionContext: ExecutionContext): Future[Unit] = Future(Unit)
 
     }
 
@@ -85,6 +93,28 @@ class LibraryTest extends TestKit(ActorSystem("LibraryTest"))
       implicit val timeout = Timeout(5 seconds)
 
       val future = ask(ref, Task("+master", redisUri))
+
+      future.onComplete {
+        case Failure(_) => assert(false)
+        case Success(msg) =>
+          assert(msg == Right("OK"))
+      }
+
+      Await.ready(future, timeout.duration)
+    }
+  }
+
+  "Add slave" must {
+    "add new slave and find masters" in new FakeCornucopiaActorSourceGraph {
+      import Library.source._
+
+      val cornucopiaActorSourceLocal = new CornucopiaActorSourceLocal
+
+      private val ref = cornucopiaActorSourceLocal.ref
+
+      implicit val timeout = Timeout(5 seconds)
+
+      val future = ask(ref, Task("+slave", redisUri))
 
       future.onComplete {
         case Failure(_) => assert(false)

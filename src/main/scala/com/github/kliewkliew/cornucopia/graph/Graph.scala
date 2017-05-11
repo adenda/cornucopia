@@ -112,7 +112,7 @@ trait CornucopiaGraph {
     * @tparam T
     * @return The unmodified input value.
     */
-  protected def waitForTopologyRefresh[T](passthrough: T)(implicit executionContext: ExecutionContext): Future[T] = Future {
+ protected def waitForTopologyRefresh[T](passthrough: T)(implicit executionContext: ExecutionContext): Future[T] = Future {
     scala.concurrent.blocking(Thread.sleep(Config.Cornucopia.refreshTimeout))
     passthrough
   }
@@ -530,6 +530,42 @@ class CornucopiaActorSource(implicit newSaladAPIimpl: Salad) extends CornucopiaG
       KeyValue(RESHARD.key, "", ref)
     }
 
+  // Add a slave node to the cluster, replicating the master that has the fewest slaves.
+  def streamAddSlavePrime(implicit executionContext: ExecutionContext) = Flow[KeyValue]
+    .map(kv => (kv.value, kv.senderRef))
+    .map(t => (RedisURI.create(t._1), t._2) )
+    .map(t => (newSaladAPIimpl.canonicalizeURI(t._1), t._2))
+    .groupedWithin(1, Config.Cornucopia.batchPeriod)
+    .mapAsync(1)(t => {
+      val t1 = t.unzip
+      val redisURIs = t1._1
+      val actorRefs = t1._2
+      addNodesToCluster(redisURIs) flatMap { uris =>
+        waitForTopologyRefresh2[Seq[RedisURI], Seq[Option[ActorRef]]](uris, actorRefs)
+      }
+    })
+    .mapAsync(1)(t => {
+      val redisURIs = t._1
+      val actorRefs = t._2
+      findMasters(redisURIs) map { _ =>
+        actorRefs
+      }
+    })
+    .mapAsync(1)(waitForTopologyRefresh[Seq[Option[ActorRef]]])
+    .mapAsync(1)(signalSlavesAdded)
+    .map(_ => KeyValue("", ""))
+
+  private def signalSlavesAdded(senders: Seq[Option[ActorRef]]): Future[Unit] = {
+    def signal(ref: ActorRef): Future[Unit] = {
+      Future {
+        ref ! Right("OK")
+      }
+    }
+    val flattened = senders.flatten
+    if (flattened.isEmpty) Future(Unit)
+    else Future.reduce(senders.flatten.map(signal))((_, _) => Unit)
+  }
+
   override protected def streamReshard(implicit executionContext: ExecutionContext) = Flow[KeyValue]
     .map(record => Seq( record.senderRef ))
     .conflate((seq1, seq2) => seq1 ++ seq2 )
@@ -551,7 +587,7 @@ class CornucopiaActorSource(implicit newSaladAPIimpl: Salad) extends CornucopiaG
 
     val flattened = senders.flatten
 
-    if (flattened.size == 0) Future(Unit)
+    if (flattened.isEmpty) Future(Unit)
     else Future.reduce(senders.flatten.map(reshard))((_, _) => Unit)
   }
 
@@ -585,7 +621,7 @@ class CornucopiaActorSource(implicit newSaladAPIimpl: Salad) extends CornucopiaG
     broadcastSender                         ~> senderMerge
     mergeFeedback.out                       ~> partition
     partition.out(ADD_MASTER.ordinal)       ~> streamAddMasterPrime ~> mergeFeedback.in(0)
-    partition.out(ADD_SLAVE.ordinal)        ~> streamAddSlave       ~> fanIn
+    partition.out(ADD_SLAVE.ordinal)        ~> streamAddSlavePrime  ~> fanIn
     partition.out(REMOVE_NODE.ordinal)      ~> streamRemoveNode     ~> partitionRm
     partitionRm.out(REMOVE_MASTER.ordinal)  ~> mergeFeedback.in(1)
     partitionRm.out(REMOVE_SLAVE.ordinal)   ~> streamRemoveSlave    ~> fanIn
