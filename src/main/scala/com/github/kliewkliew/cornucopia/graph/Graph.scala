@@ -521,7 +521,9 @@ class CornucopiaActorSource(implicit newSaladAPIimpl: Salad) extends CornucopiaG
       val t1 = t.unzip
       val redisURIs = t1._1
       val actorRefs = t1._2
-      waitForTopologyRefresh2[Seq[RedisURI], Seq[Option[ActorRef]]](redisURIs, actorRefs)
+      addNodesToCluster(redisURIs) flatMap { uris =>
+        waitForTopologyRefresh2[Seq[RedisURI], Seq[Option[ActorRef]]](uris, actorRefs)
+      }
     })
     .map{ case (_, actorRef) =>
       val ref = actorRef.head
