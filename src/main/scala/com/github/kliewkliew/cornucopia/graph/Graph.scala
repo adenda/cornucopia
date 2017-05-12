@@ -558,7 +558,7 @@ class CornucopiaActorSource(implicit newSaladAPIimpl: Salad) extends CornucopiaG
   private def signalSlavesAdded(senders: Seq[Option[ActorRef]]): Future[Unit] = {
     def signal(ref: ActorRef): Future[Unit] = {
       Future {
-        ref ! Right("OK")
+        ref ! Right("slave")
       }
     }
     val flattened = senders.flatten
@@ -580,7 +580,7 @@ class CornucopiaActorSource(implicit newSaladAPIimpl: Salad) extends CornucopiaG
     def reshard(ref: ActorRef): Future[Unit] = {
       reshardCluster(Seq()) map { _: Unit =>
         logger.info("Successfully resharded cluster, informing Kubernetes controller")
-        ref ! Right("OK")
+        ref ! Right("master")
       } recover {
         case ex: Throwable =>
           logger.error("Failed to reshard cluster, informing Kubernetes controller")
