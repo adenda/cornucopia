@@ -26,7 +26,7 @@ import com.github.kliewkliew.cornucopia.Config
 trait CornucopiaGraph {
   import scala.concurrent.ExecutionContext.Implicits.global
 
-  private val logger = LoggerFactory.getLogger(this.getClass)
+  protected val logger = LoggerFactory.getLogger(this.getClass)
 
   def partitionEvents(key: String) = key.trim.toLowerCase match {
     case ADD_MASTER.key     => ADD_MASTER.ordinal
@@ -579,9 +579,12 @@ class CornucopiaActorSource(implicit newSaladAPIimpl: Salad) extends CornucopiaG
 
     def reshard(ref: ActorRef): Future[Unit] = {
       reshardCluster(Seq()) map { _: Unit =>
+        logger.info("Successfully resharded cluster, informing Kubernetes controller")
         ref ! Right("OK")
       } recover {
-        case ex: Throwable => ref ! Left(s"ERROR: ${ex.toString}")
+        case ex: Throwable =>
+          logger.error("Failed to reshard cluster, informing Kubernetes controller")
+          ref ! Left(s"ERROR: ${ex.toString}")
       }
     }
 
