@@ -366,10 +366,58 @@ trait CornucopiaGraph {
     * @return Future indicating success.
     */
   protected def migrateSlot(slot: Int, sourceNodeId: String, destinationNodeId: String, destinationURI: RedisURI,
-                          masters: mutable.Buffer[RedisClusterNode],
-                          clusterConnections: util.HashMap[String,Future[SaladClusterAPI[CodecType,CodecType]]])
-                         (implicit saladAPI: Salad, executionContext: ExecutionContext)
-  : Future[Unit] = {
+                            masters: mutable.Buffer[RedisClusterNode],
+                            clusterConnections: util.HashMap[String,Future[SaladClusterAPI[CodecType,CodecType]]])
+                           (implicit saladAPI: Salad, executionContext: ExecutionContext): Future[Unit] = {
+
+    // Follows redis-trib.rb
+    def migrateSlotKeys(sourceConn: SaladClusterAPI[CodecType, CodecType],
+                        destinationConn: SaladClusterAPI[CodecType, CodecType]): Future[Unit] = {
+
+      import com.github.kliewkliew.salad.serde.ByteArraySerdes._
+
+      // get all the keys in the given slot
+      val keyList = for {
+        keyCount <- sourceConn.clusterCountKeysInSlot(slot)
+        keyList <- sourceConn.clusterGetKeysInSlot[CodecType](slot, keyCount.toInt)
+      } yield keyList
+
+      // migrate over all the keys in the slot from source to destination node
+      val migrate = for {
+        keys <- keyList
+        result <- sourceConn.migrate[CodecType](destinationURI, keys.toList)
+      } yield result
+
+      def migrateReplace: Future[Unit] = for {
+        keys <- keyList
+        result <- sourceConn.migrate[CodecType](destinationURI, keys.toList, replace = true)
+      } yield result
+
+      migrate.recover {
+        case e =>
+          "BUSYKEY".r.findFirstIn(e.toString) match { // handle the case of a BUSYKEY error
+            case Some(_) =>
+              logger.warn("Problem Migrating Slot: Target key exists. Replacing it for FIX.")
+              migrateReplace
+            case _ =>
+              logger.error(s"Failed to migrate data of slot $slot from $sourceNodeId to: $destinationNodeId at $destinationURI", e)
+              Future(Unit)
+          }
+      }
+
+      migrate
+    }
+
+    def setSlotAssignment(sourceConn: SaladClusterAPI[CodecType, CodecType],
+                        destinationConn: SaladClusterAPI[CodecType, CodecType]): Future[Unit] = {
+      for {
+        _ <- destinationConn.clusterSetSlotImporting(slot, sourceNodeId)
+        _ <- sourceConn.clusterSetSlotMigrating(slot, destinationNodeId)
+      } yield {
+        Future(Unit)
+      }
+    }
+
     destinationNodeId match {
       case `sourceNodeId` =>
         // Don't migrate if the source and destination are the same.
@@ -378,36 +426,9 @@ trait CornucopiaGraph {
         for {
           sourceConnection <- clusterConnections.get(sourceNodeId)
           destinationConnection <- clusterConnections.get(destinationNodeId)
-        } yield {
-          // Sequentially execute the steps outline in:
-          // https://redis.io/commands/cluster-setslot#redis-cluster-live-resharding-explained
-          import com.github.kliewkliew.salad.serde.ByteArraySerdes._
-          val migrationResult =
-            for {
-              _ <- destinationConnection.clusterSetSlotStable(slot).recover { case _ => Unit }
-              _ <- sourceConnection.clusterSetSlotStable(slot).recover { case _ => Unit }
-              _ <- destinationConnection.clusterSetSlotImporting(slot, sourceNodeId)
-              _ <- sourceConnection.clusterSetSlotMigrating(slot, destinationNodeId)
-              keyCount <- sourceConnection.clusterCountKeysInSlot(slot)
-              keyList <- sourceConnection.clusterGetKeysInSlot[CodecType](slot, keyCount.toInt)
-              _ <- sourceConnection.migrate[CodecType](destinationURI, keyList.toList)
-              _ <- sourceConnection.clusterSetSlotNode(slot, destinationNodeId)
-              finalResult <- destinationConnection.clusterSetSlotNode(slot, destinationNodeId)
-            } yield {
-              finalResult
-            }
-          migrationResult.onSuccess { case _ => logger.trace(s"Migrated data of slot $slot from $sourceNodeId to: $destinationNodeId at $destinationURI") }
-          migrationResult.onFailure { case e => logger.debug(s"Failed to migrate data of slot $slot from $sourceNodeId to: $destinationNodeId at $destinationURI", e)}
-          // Undocumented but necessary final steps found in http://download.redis.io/redis-stable/src/redis-trib.rb
-          // `recover` to perform these steps even if the previous steps failed, but don't perform these steps until the previous steps did attempt execution.
-          val finalMigrationResult = migrationResult.recover { case _ => Unit }
-            .flatMap(_ => notifySlotAssignment(slot, masters)).recover { case _ => Unit }
-            .flatMap(_ => sourceConnection.clusterDelSlot(slot)).recover { case _ => Unit }
-            .flatMap(_ => destinationConnection.clusterAddSlot(slot))
-          finalMigrationResult.onSuccess { case _ => logger.trace(s"Updated slot table for slot $slot") }
-          finalMigrationResult.onFailure { case e => logger.debug(s"Failed to update slot table for slot $slot", e)}
-          finalMigrationResult.map(x => x)
-        }
+          _ <- setSlotAssignment(sourceConnection, destinationConnection)
+          _ <- migrateSlotKeys(sourceConnection, destinationConnection)
+        } yield notifySlotAssignment(slot, masters)
     }
   }
 
