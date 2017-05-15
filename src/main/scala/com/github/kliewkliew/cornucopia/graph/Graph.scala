@@ -651,7 +651,7 @@ class CornucopiaActorSource(implicit newSaladAPIimpl: Salad) extends CornucopiaG
   protected def computeReshardTable(sourceNodes: List[RedisClusterNode]): Map[String, List[Int]] = {
     import scala.collection.JavaConverters._
 
-    val reshardTable: Map[String, List[Int]] = Map()
+    val reshardTable: scala.collection.immutable.Map[String, List[Int]] = Map.empty[String, List[Int]]
 
     case class LogicalNode(node: RedisClusterNode, slots: List[Int])
 
@@ -675,16 +675,16 @@ class CornucopiaActorSource(implicit newSaladAPIimpl: Salad) extends CornucopiaG
       val sortedSlots = source.slots.sorted
       val n = computeNumSlots(i, source)
       val slots = sortedSlots.take(n)
-      reshardTable put(source.node.getNodeId, slots)
+      reshardTable + (source.node.getNodeId -> slots)
     }
 
     reshardTable
   }
 
   private def printReshardTable(reshardTable: Map[String, List[Int]]) = {
-    logger.debug(s"Reshard Table:")
+    logger.info(s"Reshard Table:")
     reshardTable foreach { case (nodeId, slots) =>
-        logger.debug(s"Migrating slots from node '$nodeId': ${slots.mkString(", ")}")
+        logger.info(s"Migrating slots from node '$nodeId': ${slots.mkString(", ")}")
     }
   }
 

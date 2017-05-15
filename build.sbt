@@ -2,7 +2,7 @@ name := "cornucopia"
 organization := "com.github.kliewkliew"
 
 //version := "1.1.2"
-version := "0.17-SNAPSHOT"
+version := "0.18-SNAPSHOT"
 
 scalaVersion := "2.11.8"
 
