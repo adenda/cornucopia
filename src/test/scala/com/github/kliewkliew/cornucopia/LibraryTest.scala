@@ -72,6 +72,12 @@ class LibraryTest extends TestKit(ActorSystem("LibraryTest"))
       override protected def findMasters(redisURIList: Seq[RedisURI])
                                         (implicit executionContext: ExecutionContext): Future[Unit] = Future(Unit)
 
+      override protected def reshardClusterPrimeWrapper(sender: Option[ActorRef], newMasterURI: Option[RedisURI]): Future[Unit] = {
+        reshardClusterPrime(sender, newMasterURI)
+      }
+
+      override protected def reshardClusterWithNewMaster(newMasterURI: RedisURI)(implicit newSaladAPIimpl: Salad): Future[Unit] = Future(Unit)
+
     }
 
   }
@@ -97,7 +103,7 @@ class LibraryTest extends TestKit(ActorSystem("LibraryTest"))
       future.onComplete {
         case Failure(_) => assert(false)
         case Success(msg) =>
-          assert(msg == Right("OK"))
+          assert(msg == Right("master"))
       }
 
       Await.ready(future, timeout.duration)
@@ -119,7 +125,7 @@ class LibraryTest extends TestKit(ActorSystem("LibraryTest"))
       future.onComplete {
         case Failure(_) => assert(false)
         case Success(msg) =>
-          assert(msg == Right("OK"))
+          assert(msg == Right("slave"))
       }
 
       Await.ready(future, timeout.duration)

@@ -46,7 +46,7 @@ trait CornucopiaGraph {
     * Stream definitions for the graph.
     */
   // Extract a tuple of the key and value from a Kafka record.
-  case class KeyValue(key: String, value: String, senderRef: Option[ActorRef] = None)
+  case class KeyValue(key: String, value: String, senderRef: Option[ActorRef] = None, newMasterURI: Option[RedisURI] = None)
 
   // Add a master node to the cluster.
   def streamAddMaster(implicit executionContext: ExecutionContext) = Flow[KeyValue]
@@ -287,6 +287,7 @@ trait CornucopiaGraph {
       }
     }
 
+
   /**
     * Reshard the cluster using a view of thecluster consisting of a subset of master nodes.
     *
@@ -326,7 +327,7 @@ trait CornucopiaGraph {
           migrateSlot(
             slot,
             sourceNodeId, destinationNodeId, idToURI.get(destinationNodeId),
-            assignableMasters, clusterConnections)
+            assignableMasters.toList, clusterConnections)
         }
       }
       val finalMigrateResult = Future.sequence(migrateResults)
@@ -335,12 +336,15 @@ trait CornucopiaGraph {
       // We attempted to migrate the data but do not prevent slot reassignment if migration fails.
       // We may lose prior data but we ensure that all slots are assigned.
       finalMigrateResult.onComplete { case _ =>
-        List.range(0, 16384).map(notifySlotAssignment(_, assignableMasters))
+        // This is broken anyways
+        //List.range(0, 16384).map(notifySlotAssignment(_, assignableMasters))
+        Unit
       }
       finalMigrateResult.flatMap(_ => forgetNodes(withoutNodes))
     }
   }
 
+  // TODO: Put this method out of its misery
   // TODO: pass slotNode as a lambda to migrateSlot and notifySlotAssignment.
   // TODO: more efficient slot assignment to prevent data migration.
   /**
@@ -366,7 +370,7 @@ trait CornucopiaGraph {
     * @return Future indicating success.
     */
   protected def migrateSlot(slot: Int, sourceNodeId: String, destinationNodeId: String, destinationURI: RedisURI,
-                            masters: mutable.Buffer[RedisClusterNode],
+                            masters: List[RedisClusterNode],
                             clusterConnections: util.HashMap[String,Future[SaladClusterAPI[CodecType,CodecType]]])
                            (implicit saladAPI: Salad, executionContext: ExecutionContext): Future[Unit] = {
 
@@ -400,9 +404,17 @@ trait CornucopiaGraph {
               logger.warn("Problem Migrating Slot: Target key exists. Replacing it for FIX.")
               migrateReplace
             case _ =>
-              logger.error(s"Failed to migrate data of slot $slot from $sourceNodeId to: $destinationNodeId at $destinationURI", e)
+              logger.error(s"Failed to migrate data of slot $slot from $sourceNodeId to $destinationNodeId at ${destinationURI.getHost}", e)
               Future(Unit)
           }
+      }
+
+      migrate.onSuccess { case _ =>
+        logger.info(s"Successfully migrated slot $slot from $sourceNodeId to $destinationNodeId at ${destinationURI.getHost}")
+      }
+
+      migrateReplace.onSuccess { case _ =>
+        logger.info(s"Successfully migrated slot $slot from $sourceNodeId to $destinationNodeId at ${destinationURI.getHost}")
       }
 
       migrate
@@ -428,7 +440,7 @@ trait CornucopiaGraph {
           destinationConnection <- clusterConnections.get(destinationNodeId)
           _ <- setSlotAssignment(sourceConnection, destinationConnection)
           _ <- migrateSlotKeys(sourceConnection, destinationConnection)
-        } yield notifySlotAssignment(slot, masters)
+        } yield notifySlotAssignment(slot, destinationNodeId, masters)
     }
   }
 
@@ -436,15 +448,16 @@ trait CornucopiaGraph {
     * Notify all master nodes of a slot assignment so that they will immediately be able to redirect clients.
     *
     * @param masters The list of nodes in the cluster that will be assigned hash slots.
+    * @param assignedNodeId The node that should be assigned the slot
     * @param executionContext The thread dispatcher context.
     * @return Future indicating success.
     */
-  protected def notifySlotAssignment(slot: Int, masters: mutable.Buffer[RedisClusterNode])
+  protected def notifySlotAssignment(slot: Int, assignedNodeId: String, masters: List[RedisClusterNode])
                                   (implicit saladAPI: Salad, executionContext: ExecutionContext)
   : Future[Unit] = {
     val getMasterConnections = masters.map(master => getConnection(master.getNodeId))
     Future.sequence(getMasterConnections).flatMap { masterConnections =>
-      val notifyResults = masterConnections.map(_.clusterSetSlotNode(slot, slotNode(slot, masters)))
+      val notifyResults = masterConnections.map(_.clusterSetSlotNode(slot, assignedNodeId))
       Future.sequence(notifyResults).map(x => x)
     }
   }
@@ -546,9 +559,10 @@ class CornucopiaActorSource(implicit newSaladAPIimpl: Salad) extends CornucopiaG
         waitForTopologyRefresh2[Seq[RedisURI], Seq[Option[ActorRef]]](uris, actorRefs)
       }
     })
-    .map{ case (_, actorRef) =>
+    .map{ case (redisURIs, actorRef) =>
       val ref = actorRef.head
-      KeyValue(RESHARD.key, "", ref)
+      val uri = redisURIs.head
+      KeyValue(RESHARD.key, "", ref, Some(uri))
     }
 
   // Add a slave node to the cluster, replicating the master that has the fewest slaves.
@@ -588,18 +602,27 @@ class CornucopiaActorSource(implicit newSaladAPIimpl: Salad) extends CornucopiaG
   }
 
   override protected def streamReshard(implicit executionContext: ExecutionContext) = Flow[KeyValue]
-    .map(record => Seq( record.senderRef ))
-    .conflate((seq1, seq2) => seq1 ++ seq2 )
+    .map(kv => (kv.senderRef, kv.newMasterURI))
     .throttle(1, Config.Cornucopia.minReshardWait, 1, ThrottleMode.Shaping)
-    .mapAsync(1)(reshardClusterPrime)
+    .mapAsync(1)(t => {
+      val senderRef = t._1
+      val newMasterURI = t._2
+      reshardClusterPrimeWrapper(senderRef, newMasterURI)
+    })
     .mapAsync(1)(waitForTopologyRefresh[Unit])
     .mapAsync(1)(_ => logTopology)
     .map(_ => KeyValue("", ""))
 
-  private def reshardClusterPrime(senders: Seq[Option[ActorRef]]): Future[Unit] = {
+  // For wrapping reshardClusterPrime so we can test by passing in a dummy implicit salad API
+  protected def reshardClusterPrimeWrapper(sender: Option[ActorRef], newMasterURI: Option[RedisURI]): Future[Unit] = {
+    implicit val newSaladAPIimpl = newSaladAPI
+    reshardClusterPrime(sender, newMasterURI)
+  }
 
-    def reshard(ref: ActorRef): Future[Unit] = {
-      reshardCluster(Seq()) map { _: Unit =>
+  protected def reshardClusterPrime(sender: Option[ActorRef], newMasterURI: Option[RedisURI])(implicit newSaladAPIimpl: Salad): Future[Unit] = {
+
+    def reshard(ref: ActorRef, uri: RedisURI): Future[Unit] = {
+      reshardClusterWithNewMaster(uri) map { _: Unit =>
         logger.info("Successfully resharded cluster, informing Kubernetes controller")
         ref ! Right("master")
       } recover {
@@ -609,10 +632,93 @@ class CornucopiaActorSource(implicit newSaladAPIimpl: Salad) extends CornucopiaG
       }
     }
 
-    val flattened = senders.flatten
+    val result = for {
+      ref <- sender
+      uri <- newMasterURI
+    } yield reshard(ref, uri)
 
-    if (flattened.isEmpty) Future(Unit)
-    else Future.reduce(senders.flatten.map(reshard))((_, _) => Unit)
+    result match {
+      case Some(f) => f
+      case None =>
+        // this should never happen though
+        logger.error("There was a problem resharding the cluster: sender actor or new redis master URI missing")
+        Future(Unit)
+    }
+  }
+
+  // TO-DO: make Slot a Type (Int)
+  // TO-DO: make NodeID a Type (String)
+  protected def computeReshardTable(sourceNodes: List[RedisClusterNode]): Map[String, List[Int]] = {
+    val reshardTable: Map[String, List[Int]] = Map()
+
+    case class LogicalNode(node: RedisClusterNode, slots: List[Int])
+
+    val logicalNodes = sourceNodes.map(n => LogicalNode(n, n.getSlots.asInstanceOf[List[Int]]))
+
+    val sortedSources = logicalNodes.sorted(Ordering.by((_: LogicalNode).slots.size).reverse)
+
+    val totalSourceSlots = sortedSources.foldLeft(0)((sum, n) => sum + n.slots.size)
+
+    val numSlots = totalSourceSlots / (logicalNodes.size + 1) // total number of slots to move to target
+
+    def computeNumSlots(i: Int, source: LogicalNode): Int = {
+      if (i == 0) Math.ceil((numSlots.toFloat / totalSourceSlots) * source.slots.size).toInt
+      else Math.floor((numSlots.toFloat / totalSourceSlots) * source.slots.size).toInt
+    }
+
+    sortedSources.zipWithIndex.foreach { case (source, i) =>
+      val sortedSlots = source.slots.sorted
+      val n = computeNumSlots(i, source)
+      val slots = sortedSlots.take(n)
+      reshardTable put(source.node.getNodeId, slots)
+    }
+
+    reshardTable
+  }
+
+  private def printReshardTable(reshardTable: Map[String, List[Int]]) = {
+    logger.debug(s"Reshard Table:")
+    reshardTable foreach { case (nodeId, slots) =>
+        logger.debug(s"Migrating slots from node '$nodeId': ${slots.mkString(", ")}")
+    }
+  }
+
+  protected def reshardClusterWithNewMaster(newMasterURI: RedisURI)(implicit newSaladAPIimpl: Salad)
+  : Future[Unit] = {
+    // Execute futures using a thread pool so we don't run out of memory due to futures.
+    implicit val executionContext = Config.Consumer.actorSystem.dispatchers.lookup("akka.actor.resharding-dispatcher")
+    newSaladAPIimpl.masterNodes.flatMap { mn =>
+      val masterNodes = mn.toList
+      val liveMasters = masterNodes.filter(_.isConnected)
+
+      lazy val idToURI = new util.HashMap[String,RedisURI](liveMasters.length + 1, 1)
+
+      // Re-use cluster connections so we don't exceed file-handle limit or waste resources.
+      lazy val clusterConnections = new util.HashMap[String,Future[SaladClusterAPI[CodecType,CodecType]]](liveMasters.length + 1, 1)
+
+      val targetNode = masterNodes.filter(_.getUri == newMasterURI).head
+
+      liveMasters.map { master =>
+        idToURI.put(master.getNodeId, master.getUri)
+        val connection = getConnection(master.getNodeId)
+        clusterConnections.put(master.getNodeId, connection)
+      }
+
+      val sourceNodes = masterNodes.filterNot(_ == targetNode)
+
+      val reshardTable = computeReshardTable(sourceNodes)
+
+      printReshardTable(reshardTable)
+
+      val migrateResults = for {
+        (sourceNodeId, slots) <- reshardTable
+        slot <- slots
+      } yield {
+        migrateSlot(slot, sourceNodeId, targetNode.getNodeId, newMasterURI, liveMasters, clusterConnections)
+      }
+
+      Future.reduce(migrateResults)((_, b) => b)
+    }
   }
 
   protected def extractKeyValue = Flow[ActorRecord]
