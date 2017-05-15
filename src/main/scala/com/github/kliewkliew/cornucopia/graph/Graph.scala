@@ -49,10 +49,22 @@ trait CornucopiaGraph {
   // Extract a tuple of the key and value from a Kafka record.
   case class KeyValue(key: String, value: String, senderRef: Option[ActorRef] = None, newMasterURI: Option[RedisURI] = None)
 
+  // Allows to create Redis URI from the following forms:
+  // host OR host:port
+  // e.g., redis://127.0.0.1 OR redis://127.0.0.1:7006
+  protected def createRedisUri(uri: String): RedisURI = {
+    val parts = uri.split(":")
+    if (parts.size == 3) {
+      val host = parts(1).foldLeft("")((acc, ch) => if (ch != '/') acc + ch else acc)
+      RedisURI.create(host, parts(2).toInt)
+    }
+    else RedisURI.create(uri)
+  }
+
   // Add a master node to the cluster.
   def streamAddMaster(implicit executionContext: ExecutionContext) = Flow[KeyValue]
     .map(_.value)
-    .map(RedisURI.create)
+    .map(createRedisUri)
     .map(newSaladAPI.canonicalizeURI)
     .groupedWithin(100, Config.Cornucopia.batchPeriod)
     .mapAsync(1)(addNodesToCluster)
@@ -62,7 +74,7 @@ trait CornucopiaGraph {
   // Add a slave node to the cluster, replicating the master that has the fewest slaves.
   protected def streamAddSlave(implicit executionContext: ExecutionContext) = Flow[KeyValue]
     .map(_.value)
-    .map(RedisURI.create)
+    .map(createRedisUri)
     .map(newSaladAPI.canonicalizeURI)
     .groupedWithin(100, Config.Cornucopia.batchPeriod)
     .mapAsync(1)(addNodesToCluster)
@@ -75,7 +87,7 @@ trait CornucopiaGraph {
   // Emit a key-value pair indicating the node type and URI.
   protected def streamRemoveNode(implicit executionContext: ExecutionContext) = Flow[KeyValue]
     .map(_.value)
-    .map(RedisURI.create)
+    .map(createRedisUri)
     .map(newSaladAPI.canonicalizeURI)
     .mapAsync(1)(emitNodeType)
 
@@ -546,10 +558,11 @@ class CornucopiaActorSource(implicit newSaladAPIimpl: Salad) extends CornucopiaG
 
   protected type ActorRecord = Task
 
+
   // Add a master node to the cluster.
   def streamAddMasterPrime(implicit executionContext: ExecutionContext, newSaladAPIimpl: Connection.Salad) = Flow[KeyValue]
     .map(kv => (kv.value, kv.senderRef))
-    .map(t => (RedisURI.create(t._1), t._2) )
+    .map(t => (createRedisUri(t._1), t._2) )
     .map(t => (newSaladAPIimpl.canonicalizeURI(t._1), t._2))
     .groupedWithin(1, Config.Cornucopia.batchPeriod)
     .mapAsync(1)(t => {
@@ -569,7 +582,7 @@ class CornucopiaActorSource(implicit newSaladAPIimpl: Salad) extends CornucopiaG
   // Add a slave node to the cluster, replicating the master that has the fewest slaves.
   def streamAddSlavePrime(implicit executionContext: ExecutionContext) = Flow[KeyValue]
     .map(kv => (kv.value, kv.senderRef))
-    .map(t => (RedisURI.create(t._1), t._2) )
+    .map(t => (createRedisUri(t._1), t._2) )
     .map(t => (newSaladAPIimpl.canonicalizeURI(t._1), t._2))
     .groupedWithin(1, Config.Cornucopia.batchPeriod)
     .mapAsync(1)(t => {
