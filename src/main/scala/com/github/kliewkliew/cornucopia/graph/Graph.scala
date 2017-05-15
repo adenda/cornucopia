@@ -327,7 +327,7 @@ trait CornucopiaGraph {
           migrateSlot(
             slot,
             sourceNodeId, destinationNodeId, idToURI.get(destinationNodeId),
-            assignableMasters, clusterConnections)
+            assignableMasters.toList, clusterConnections)
         }
       }
       val finalMigrateResult = Future.sequence(migrateResults)
@@ -370,7 +370,7 @@ trait CornucopiaGraph {
     * @return Future indicating success.
     */
   protected def migrateSlot(slot: Int, sourceNodeId: String, destinationNodeId: String, destinationURI: RedisURI,
-                            masters: mutable.Buffer[RedisClusterNode],
+                            masters: List[RedisClusterNode],
                             clusterConnections: util.HashMap[String,Future[SaladClusterAPI[CodecType,CodecType]]])
                            (implicit saladAPI: Salad, executionContext: ExecutionContext): Future[Unit] = {
 
@@ -452,7 +452,7 @@ trait CornucopiaGraph {
     * @param executionContext The thread dispatcher context.
     * @return Future indicating success.
     */
-  protected def notifySlotAssignment(slot: Int, assignedNodeId: String, masters: mutable.Buffer[RedisClusterNode])
+  protected def notifySlotAssignment(slot: Int, assignedNodeId: String, masters: List[RedisClusterNode])
                                   (implicit saladAPI: Salad, executionContext: ExecutionContext)
   : Future[Unit] = {
     val getMasterConnections = masters.map(master => getConnection(master.getNodeId))
@@ -648,12 +648,15 @@ class CornucopiaActorSource(implicit newSaladAPIimpl: Salad) extends CornucopiaG
 
   // TO-DO: make Slot a Type (Int)
   // TO-DO: make NodeID a Type (String)
-  protected def computeReshardTable(sourceNodes: mutable.Buffer[RedisClusterNode]): Map[String, List[Int]] = {
+  protected def computeReshardTable(sourceNodes: List[RedisClusterNode]): Map[String, List[Int]] = {
     val reshardTable: Map[String, List[Int]] = Map()
 
     case class LogicalNode(node: RedisClusterNode, slots: List[Int])
 
-    val logicalNodes = sourceNodes.map(n => LogicalNode(n, n.getSlots.asInstanceOf[List[Int]]))
+    val logicalNodes = sourceNodes.map { n =>
+      val slots = n.getSlots.asInstanceOf[List[Int]]
+      LogicalNode(n, slots)
+    }
 
     val sortedSources = logicalNodes.sorted(Ordering.by((_: LogicalNode).slots.size).reverse)
 
@@ -687,7 +690,8 @@ class CornucopiaActorSource(implicit newSaladAPIimpl: Salad) extends CornucopiaG
   : Future[Unit] = {
     // Execute futures using a thread pool so we don't run out of memory due to futures.
     implicit val executionContext = Config.Consumer.actorSystem.dispatchers.lookup("akka.actor.resharding-dispatcher")
-    newSaladAPIimpl.masterNodes.flatMap { masterNodes =>
+    newSaladAPIimpl.masterNodes.flatMap { mn =>
+      val masterNodes = mn.toList
       val liveMasters = masterNodes.filter(_.isConnected)
 
       lazy val idToURI = new util.HashMap[String,RedisURI](liveMasters.length + 1, 1)
