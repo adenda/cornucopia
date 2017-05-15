@@ -627,7 +627,7 @@ class CornucopiaActorSource(implicit newSaladAPIimpl: Salad) extends CornucopiaG
         ref ! Right("master")
       } recover {
         case ex: Throwable =>
-          logger.error("Failed to reshard cluster, informing Kubernetes controller")
+          logger.error("Failed to reshard cluster, informing Kubernetes controller", ex)
           ref ! Left(s"${ex.toString}")
       }
     }
