@@ -10,6 +10,7 @@ import org.slf4j.LoggerFactory
 import org.apache.kafka.clients.consumer.ConsumerRecord
 import com.github.kliewkliew.cornucopia.redis._
 import com.github.kliewkliew.salad.SaladClusterAPI
+import com.github.kliewkliew.cornucopia.redis.ReshardTable._
 import com.lambdaworks.redis.RedisURI
 import com.lambdaworks.redis.cluster.models.partitions.RedisClusterNode
 import com.lambdaworks.redis.models.role.RedisInstance.Role
@@ -644,41 +645,6 @@ class CornucopiaActorSource(implicit newSaladAPIimpl: Salad) extends CornucopiaG
         logger.error("There was a problem resharding the cluster: sender actor or new redis master URI missing")
         Future(Unit)
     }
-  }
-
-  // TO-DO: make Slot a Type (Int)
-  // TO-DO: make NodeID a Type (String)
-  protected def computeReshardTable(sourceNodes: List[RedisClusterNode]): Map[String, List[Int]] = {
-    import scala.collection.JavaConverters._
-
-    val reshardTable: scala.collection.immutable.Map[String, List[Int]] = Map.empty[String, List[Int]]
-
-    case class LogicalNode(node: RedisClusterNode, slots: List[Int])
-
-    val logicalNodes = sourceNodes.map { n =>
-      val slots = n.getSlots.asScala.toList.map(_.toInt)
-      LogicalNode(n, slots)
-    }
-
-    val sortedSources = logicalNodes.sorted(Ordering.by((_: LogicalNode).slots.size).reverse)
-
-    val totalSourceSlots = sortedSources.foldLeft(0)((sum, n) => sum + n.slots.size)
-
-    val numSlots = totalSourceSlots / (logicalNodes.size + 1) // total number of slots to move to target
-
-    def computeNumSlots(i: Int, source: LogicalNode): Int = {
-      if (i == 0) Math.ceil((numSlots.toFloat / totalSourceSlots) * source.slots.size).toInt
-      else Math.floor((numSlots.toFloat / totalSourceSlots) * source.slots.size).toInt
-    }
-
-    sortedSources.zipWithIndex.foreach { case (source, i) =>
-      val sortedSlots = source.slots.sorted
-      val n = computeNumSlots(i, source)
-      val slots = sortedSlots.take(n)
-      reshardTable + (source.node.getNodeId -> slots)
-    }
-
-    reshardTable
   }
 
   private def printReshardTable(reshardTable: Map[String, List[Int]]) = {
