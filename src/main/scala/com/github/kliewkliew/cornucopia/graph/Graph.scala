@@ -649,12 +649,14 @@ class CornucopiaActorSource(implicit newSaladAPIimpl: Salad) extends CornucopiaG
   // TO-DO: make Slot a Type (Int)
   // TO-DO: make NodeID a Type (String)
   protected def computeReshardTable(sourceNodes: List[RedisClusterNode]): Map[String, List[Int]] = {
+    import scala.collection.JavaConverters._
+
     val reshardTable: Map[String, List[Int]] = Map()
 
     case class LogicalNode(node: RedisClusterNode, slots: List[Int])
 
     val logicalNodes = sourceNodes.map { n =>
-      val slots = n.getSlots.asInstanceOf[List[Int]]
+      val slots = n.getSlots.asScala.toList.map(_.toInt)
       LogicalNode(n, slots)
     }
 
