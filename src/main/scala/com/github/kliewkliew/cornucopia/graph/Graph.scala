@@ -384,7 +384,8 @@ trait CornucopiaGraph {
     */
   protected def migrateSlot(slot: Int, sourceNodeId: String, destinationNodeId: String, destinationURI: RedisURI,
                             masters: List[RedisClusterNode],
-                            clusterConnections: util.HashMap[String,Future[SaladClusterAPI[CodecType,CodecType]]])
+                            clusterConnections: util.HashMap[String,Future[SaladClusterAPI[CodecType,CodecType]]],
+                            attempts: Int = 1)
                            (implicit saladAPI: Salad, executionContext: ExecutionContext): Future[Unit] = {
 
     // Follows redis-trib.rb
@@ -405,32 +406,40 @@ trait CornucopiaGraph {
         result <- sourceConn.migrate[CodecType](destinationURI, keys.toList)
       } yield result
 
-      def migrateReplace: Future[Unit] = for {
-        keys <- keyList
-        result <- sourceConn.migrate[CodecType](destinationURI, keys.toList, replace = true)
-      } yield result
-
-      migrate.recover {
-        case e =>
-          "BUSYKEY".r.findFirstIn(e.toString) match { // handle the case of a BUSYKEY error
-            case Some(_) =>
-              logger.warn("Problem Migrating Slot: Target key exists. Replacing it for FIX.")
-              migrateReplace
-            case _ =>
-              logger.error(s"Failed to migrate data of slot $slot from $sourceNodeId to $destinationNodeId at ${destinationURI.getHost}", e)
-              Future(Unit)
-          }
-      }
-
       migrate.onSuccess { case _ =>
-        logger.info(s"Successfully migrated slot $slot from $sourceNodeId to $destinationNodeId at ${destinationURI.getHost}")
+        logger.info(s"Successfully migrated slot $slot from $sourceNodeId to $destinationNodeId at ${destinationURI.getHost} on attempt $attempts")
       }
 
-      migrateReplace.onSuccess { case _ =>
-        logger.info(s"Successfully migrated slot $slot from $sourceNodeId to $destinationNodeId at ${destinationURI.getHost}")
+      def handleFailedMigration(error: Throwable): Future[Unit] = {
+        val errorString = error.toString
+
+        def findError(e: String, identifier: String): Boolean = {
+          identifier.r.findFirstIn(e) match {
+            case Some(_) => true
+            case _ => false
+          }
+        }
+
+        if (findError(errorString, "BUSYKEY")) {
+          logger.warn(s"Problem migrating slot $slot from $sourceNodeId to $destinationNodeId at ${destinationURI.getHost} (BUSYKEY): Target key exists. Replacing it for FIX.")
+          def migrateReplace: Future[Unit] = for {
+            keys <- keyList
+            result <- sourceConn.migrate[CodecType](destinationURI, keys.toList, replace = true)
+          } yield result
+          migrateReplace
+        } else if (findError(errorString, "CLUSTERDOWN")) {
+          logger.error(s"Failed to migrate slot $slot from $sourceNodeId to $destinationNodeId at ${destinationURI.getHost} (CLUSTERDOWN): Retrying attempt for $attempts")
+          migrateSlot(slot, sourceNodeId, destinationNodeId, destinationURI, masters, clusterConnections, attempts + 1)
+        } else if (findError(errorString, "MOVED")) {
+          logger.error(s"Failed to migrate slot $slot from $sourceNodeId to $destinationNodeId at ${destinationURI.getHost} (MOVED): Ignoring on attempt $attempts")
+          Future(Unit)
+        } else {
+          logger.error(s"Failed to migrate slot $slot from $sourceNodeId to $destinationNodeId at ${destinationURI.getHost}", error)
+          Future(Unit)
+        }
       }
 
-      migrate
+      migrate.recover { case e => handleFailedMigration(e) }
     }
 
     def setSlotAssignment(sourceConn: SaladClusterAPI[CodecType, CodecType],
@@ -701,7 +710,7 @@ class CornucopiaActorSource(implicit newSaladAPIimpl: Salad) extends CornucopiaG
         migrateSlot(slot, sourceNodeId, targetNode.getNodeId, newMasterURI, liveMasters, clusterConnections)
       }
 
-      Future.reduce(migrateResults)((_, b) => b)
+      Future.fold(migrateResults)()((_, b) => b)
     }
   }
 
