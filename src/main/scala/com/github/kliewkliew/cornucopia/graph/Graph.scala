@@ -29,6 +29,8 @@ trait CornucopiaGraph {
 
   protected val logger = LoggerFactory.getLogger(this.getClass)
 
+  protected def getNewSaladApi: Salad = newSaladAPI
+
   def partitionEvents(key: String) = key.trim.toLowerCase match {
     case ADD_MASTER.key     => ADD_MASTER.ordinal
     case ADD_SLAVE.key      => ADD_SLAVE.ordinal
@@ -65,17 +67,17 @@ trait CornucopiaGraph {
   def streamAddMaster(implicit executionContext: ExecutionContext) = Flow[KeyValue]
     .map(_.value)
     .map(createRedisUri)
-    .map(newSaladAPI.canonicalizeURI)
+    .map(getNewSaladApi.canonicalizeURI)
     .groupedWithin(100, Config.Cornucopia.batchPeriod)
     .mapAsync(1)(addNodesToCluster)
     .mapAsync(1)(waitForTopologyRefresh[Seq[RedisURI]])
     .map(_ => KeyValue(RESHARD.key, ""))
 
   // Add a slave node to the cluster, replicating the master that has the fewest slaves.
-  protected def streamAddSlave(implicit executionContext: ExecutionContext) = Flow[KeyValue]
+  def streamAddSlave(implicit executionContext: ExecutionContext) = Flow[KeyValue]
     .map(_.value)
     .map(createRedisUri)
-    .map(newSaladAPI.canonicalizeURI)
+    .map(getNewSaladApi.canonicalizeURI)
     .groupedWithin(100, Config.Cornucopia.batchPeriod)
     .mapAsync(1)(addNodesToCluster)
     .mapAsync(1)(waitForTopologyRefresh[Seq[RedisURI]])
@@ -88,7 +90,7 @@ trait CornucopiaGraph {
   protected def streamRemoveNode(implicit executionContext: ExecutionContext) = Flow[KeyValue]
     .map(_.value)
     .map(createRedisUri)
-    .map(newSaladAPI.canonicalizeURI)
+    .map(getNewSaladApi.canonicalizeURI)
     .mapAsync(1)(emitNodeType)
 
   // Remove a slave node from the cluster.
@@ -153,7 +155,7 @@ trait CornucopiaGraph {
     * @return
     */
   protected def logTopology(implicit executionContext: ExecutionContext): Future[Unit] = {
-    implicit val saladAPI = newSaladAPI
+    implicit val saladAPI = getNewSaladApi
     saladAPI.clusterNodes.map { allNodes =>
       val masterNodes = allNodes.filter(Role.MASTER == _.getRole)
       val slaveNodes = allNodes.filter(Role.SLAVE == _.getRole)
@@ -170,7 +172,7 @@ trait CornucopiaGraph {
     * @return The list of URI if the nodes were met. TODO: emit only the nodes that were successfully added.
     */
   protected def addNodesToCluster(redisURIList: Seq[RedisURI])(implicit executionContext: ExecutionContext): Future[Seq[RedisURI]] = {
-    implicit val saladAPI = newSaladAPI
+    implicit val saladAPI = getNewSaladApi
     saladAPI.clusterNodes.flatMap { allNodes =>
       val getConnectionsToLiveNodes = allNodes.filter(_.isConnected).map(node => getConnection(node.getNodeId))
       Future.sequence(getConnectionsToLiveNodes).flatMap { connections =>
@@ -194,7 +196,7 @@ trait CornucopiaGraph {
     * @return Indicate that the n new slaves are replicating the poorest n masters.
     */
   protected def findMasters(redisURIList: Seq[RedisURI])(implicit executionContext: ExecutionContext): Future[Unit] = {
-    implicit val saladAPI = newSaladAPI
+    implicit val saladAPI = getNewSaladApi
     saladAPI.clusterNodes.flatMap { allNodes =>
       // Node ids for nodes that are currently master nodes but will become slave nodes.
       val newSlaveIds = allNodes.filter(node => redisURIList.contains(node.getUri)).map(_.getNodeId)
@@ -234,7 +236,7 @@ trait CornucopiaGraph {
     * @return the node type and id.
     */
   def emitNodeType(redisURI:RedisURI)(implicit executionContext: ExecutionContext): Future[KeyValue] = {
-    implicit val saladAPI = newSaladAPI
+    implicit val saladAPI = getNewSaladApi
     saladAPI.clusterNodes.map { allNodes =>
       val removalNodeOpt = allNodes.find(node => node.getUri.equals(redisURI))
       if (removalNodeOpt.isEmpty) throw new Exception(s"Node not in cluster: $redisURI")
@@ -275,7 +277,7 @@ trait CornucopiaGraph {
     if (!withoutNodes.exists(_.nonEmpty))
       Future(Unit)
     else {
-      implicit val saladAPI = newSaladAPI
+      implicit val saladAPI = getNewSaladApi
       saladAPI.clusterNodes.flatMap { allNodes =>
         logger.info(s"Forgetting nodes: $withoutNodes")
         // Reset the nodes to be removed.
@@ -312,7 +314,7 @@ trait CornucopiaGraph {
   : Future[Unit] = {
     // Execute futures using a thread pool so we don't run out of memory due to futures.
     implicit val executionContext = Config.Consumer.actorSystem.dispatchers.lookup("akka.actor.resharding-dispatcher")
-    implicit val saladAPI = newSaladAPI
+    implicit val saladAPI = getNewSaladApi
     saladAPI.masterNodes.flatMap { masterNodes =>
 
       val liveMasters = masterNodes.filter(_.isConnected)
@@ -428,7 +430,7 @@ trait CornucopiaGraph {
           } yield result
           migrateReplace
         } else if (findError(errorString, "CLUSTERDOWN")) {
-          logger.error(s"Failed to migrate slot $slot from $sourceNodeId to $destinationNodeId at ${destinationURI.getHost} (CLUSTERDOWN): Retrying attempt for $attempts")
+          logger.error(s"Failed to migrate slot $slot from $sourceNodeId to $destinationNodeId at ${destinationURI.getHost} (CLUSTERDOWN): Retrying for attempt $attempts")
           migrateSlot(slot, sourceNodeId, destinationNodeId, destinationURI, masters, clusterConnections, attempts + 1)
         } else if (findError(errorString, "MOVED")) {
           logger.error(s"Failed to migrate slot $slot from $sourceNodeId to $destinationNodeId at ${destinationURI.getHost} (MOVED): Ignoring on attempt $attempts")
@@ -518,8 +520,6 @@ trait CornucopiaGraph {
 class CornucopiaKafkaSource extends CornucopiaGraph {
   import Config.Consumer.materializer
 
-  implicit val newSaladAPIimpl: Salad = newSaladAPI
-
   private type KafkaRecord = ConsumerRecord[String, String]
 
   private def extractKeyValue = Flow[KafkaRecord]
@@ -560,19 +560,18 @@ class CornucopiaKafkaSource extends CornucopiaGraph {
 
 }
 
-class CornucopiaActorSource(implicit newSaladAPIimpl: Salad) extends CornucopiaGraph {
+class CornucopiaActorSource extends CornucopiaGraph {
   import Config.Consumer.materializer
   import com.github.kliewkliew.cornucopia.actors.CornucopiaSource.Task
   import scala.concurrent.ExecutionContext.Implicits.global
 
   protected type ActorRecord = Task
 
-
   // Add a master node to the cluster.
-  def streamAddMasterPrime(implicit executionContext: ExecutionContext, newSaladAPIimpl: Connection.Salad) = Flow[KeyValue]
+  override def streamAddMaster(implicit executionContext: ExecutionContext) = Flow[KeyValue]
     .map(kv => (kv.value, kv.senderRef))
     .map(t => (createRedisUri(t._1), t._2) )
-    .map(t => (newSaladAPIimpl.canonicalizeURI(t._1), t._2))
+    .map(t => (getNewSaladApi.canonicalizeURI(t._1), t._2))
     .groupedWithin(1, Config.Cornucopia.batchPeriod)
     .mapAsync(1)(t => {
       val t1 = t.unzip
@@ -589,10 +588,10 @@ class CornucopiaActorSource(implicit newSaladAPIimpl: Salad) extends CornucopiaG
     }
 
   // Add a slave node to the cluster, replicating the master that has the fewest slaves.
-  def streamAddSlavePrime(implicit executionContext: ExecutionContext) = Flow[KeyValue]
+  protected def streamAddSlavePrime(implicit executionContext: ExecutionContext) = Flow[KeyValue]
     .map(kv => (kv.value, kv.senderRef))
     .map(t => (createRedisUri(t._1), t._2) )
-    .map(t => (newSaladAPIimpl.canonicalizeURI(t._1), t._2))
+    .map(t => (getNewSaladApi.canonicalizeURI(t._1), t._2))
     .groupedWithin(1, Config.Cornucopia.batchPeriod)
     .mapAsync(1)(t => {
       val t1 = t.unzip
@@ -630,19 +629,13 @@ class CornucopiaActorSource(implicit newSaladAPIimpl: Salad) extends CornucopiaG
     .mapAsync(1)(t => {
       val senderRef = t._1
       val newMasterURI = t._2
-      reshardClusterPrimeWrapper(senderRef, newMasterURI)
+      reshardClusterPrime(senderRef, newMasterURI)
     })
     .mapAsync(1)(waitForTopologyRefresh[Unit])
     .mapAsync(1)(_ => logTopology)
     .map(_ => KeyValue("", ""))
 
-  // For wrapping reshardClusterPrime so we can test by passing in a dummy implicit salad API
-  protected def reshardClusterPrimeWrapper(sender: Option[ActorRef], newMasterURI: Option[RedisURI]): Future[Unit] = {
-    implicit val newSaladAPIimpl = newSaladAPI
-    reshardClusterPrime(sender, newMasterURI)
-  }
-
-  protected def reshardClusterPrime(sender: Option[ActorRef], newMasterURI: Option[RedisURI])(implicit newSaladAPIimpl: Salad): Future[Unit] = {
+  protected def reshardClusterPrime(sender: Option[ActorRef], newMasterURI: Option[RedisURI]): Future[Unit] = {
 
     def reshard(ref: ActorRef, uri: RedisURI): Future[Unit] = {
       reshardClusterWithNewMaster(uri) map { _: Unit =>
@@ -676,11 +669,14 @@ class CornucopiaActorSource(implicit newSaladAPIimpl: Salad) extends CornucopiaG
     }
   }
 
-  protected def reshardClusterWithNewMaster(newMasterURI: RedisURI)(implicit newSaladAPIimpl: Salad)
+  protected def reshardClusterWithNewMaster(newMasterURI: RedisURI)
   : Future[Unit] = {
     // Execute futures using a thread pool so we don't run out of memory due to futures.
     implicit val executionContext = Config.Consumer.actorSystem.dispatchers.lookup("akka.actor.resharding-dispatcher")
-    newSaladAPIimpl.masterNodes.flatMap { mn =>
+
+    implicit val saladAPI = getNewSaladApi
+
+    saladAPI.masterNodes.flatMap { mn =>
       val masterNodes = mn.toList
       val liveMasters = masterNodes.filter(_.isConnected)
 
@@ -733,17 +729,12 @@ class CornucopiaActorSource(implicit newSaladAPIimpl: Salad) extends CornucopiaG
       3, kv => partitionNodeRemoval(kv.key)
     ))
 
-    val broadcastSender = builder.add(Broadcast[KeyValue](2))
-
-    val senderMerge = builder.add(Merge[KeyValue](2))
-
     val fanIn = builder.add(Merge[KeyValue](5))
 
-    taskSource.out                          ~> kv                   ~> broadcastSender
-    broadcastSender                         ~> mergeFeedback.preferred
-    broadcastSender                         ~> senderMerge
+    taskSource.out                          ~> kv
+    kv                                      ~> mergeFeedback.preferred
     mergeFeedback.out                       ~> partition
-    partition.out(ADD_MASTER.ordinal)       ~> streamAddMasterPrime ~> mergeFeedback.in(0)
+    partition.out(ADD_MASTER.ordinal)       ~> streamAddMaster      ~> mergeFeedback.in(0)
     partition.out(ADD_SLAVE.ordinal)        ~> streamAddSlavePrime  ~> fanIn
     partition.out(REMOVE_NODE.ordinal)      ~> streamRemoveNode     ~> partitionRm
     partitionRm.out(REMOVE_MASTER.ordinal)  ~> mergeFeedback.in(1)
@@ -752,9 +743,7 @@ class CornucopiaActorSource(implicit newSaladAPIimpl: Salad) extends CornucopiaG
     partition.out(RESHARD.ordinal)          ~> streamReshard        ~> fanIn
     partition.out(UNSUPPORTED.ordinal)      ~> unsupportedOperation ~> fanIn
 
-    fanIn ~> senderMerge
-
-    FlowShape(taskSource.in, senderMerge.out)
+    FlowShape(taskSource.in, fanIn.out)
   })
 
   protected val cornucopiaSource = Config.Consumer.cornucopiaActorSource

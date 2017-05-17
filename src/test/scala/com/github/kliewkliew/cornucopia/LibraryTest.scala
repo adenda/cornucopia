@@ -36,10 +36,10 @@ class LibraryTest extends TestKit(ActorSystem("LibraryTest"))
     val fakeSalad = mock[Salad]
     when(fakeSalad.canonicalizeURI(anyObject())).thenReturn(RedisURI.create(redisUri))
 
-    implicit val newSaladAPIimpl = fakeSalad
-
-    class CornucopiaActorSourceLocal(implicit newSaladAPIimpl: Salad) extends CornucopiaActorSource {
+    class CornucopiaActorSourceLocal extends CornucopiaActorSource {
       lazy val probe = TestProbe()
+
+      override def getNewSaladApi: Salad = fakeSalad
 
       override def streamAddSlave(implicit executionContext: ExecutionContext) =
         Flow[KeyValue].map(_ => KeyValue("test", ""))
@@ -72,11 +72,7 @@ class LibraryTest extends TestKit(ActorSystem("LibraryTest"))
       override protected def findMasters(redisURIList: Seq[RedisURI])
                                         (implicit executionContext: ExecutionContext): Future[Unit] = Future(Unit)
 
-      override protected def reshardClusterPrimeWrapper(sender: Option[ActorRef], newMasterURI: Option[RedisURI]): Future[Unit] = {
-        reshardClusterPrime(sender, newMasterURI)
-      }
-
-      override protected def reshardClusterWithNewMaster(newMasterURI: RedisURI)(implicit newSaladAPIimpl: Salad): Future[Unit] = Future(Unit)
+      override protected def reshardClusterWithNewMaster(newMasterURI: RedisURI): Future[Unit] = Future(Unit)
 
     }
 

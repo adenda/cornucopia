@@ -74,7 +74,7 @@ class ReshardTest extends TestKit(ActorSystem("ReshardTest"))
   }
 
   "Debugging" must {
-    "be fun" in new ReshardDebug {
+    "be fun" ignore new ReshardDebug {
       import Library.source._
 
       val cornucopiaActorSource = new CornucopiaActorSource
