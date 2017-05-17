@@ -390,6 +390,8 @@ trait CornucopiaGraph {
                             attempts: Int = 1)
                            (implicit saladAPI: Salad, executionContext: ExecutionContext): Future[Unit] = {
 
+    logger.debug(s"Migrate slot for slot $slot from source node $sourceNodeId to target node $destinationNodeId")
+
     // Follows redis-trib.rb
     def migrateSlotKeys(sourceConn: SaladClusterAPI[CodecType, CodecType],
                         destinationConn: SaladClusterAPI[CodecType, CodecType]): Future[Unit] = {
@@ -464,7 +466,10 @@ trait CornucopiaGraph {
           destinationConnection <- clusterConnections.get(destinationNodeId)
           _ <- setSlotAssignment(sourceConnection, destinationConnection)
           _ <- migrateSlotKeys(sourceConnection, destinationConnection)
-        } yield notifySlotAssignment(slot, destinationNodeId, masters)
+        } yield {
+          logger.debug(s"Migrate slot successful for slot $slot from source node $sourceNodeId to target node $destinationNodeId, notifying masters of new slot assignment")
+          notifySlotAssignment(slot, destinationNodeId, masters)
+        }
     }
   }
 
@@ -687,11 +692,14 @@ class CornucopiaActorSource extends CornucopiaGraph {
 
       val targetNode = masterNodes.filter(_.getUri == newMasterURI).head
 
+
       liveMasters.map { master =>
         idToURI.put(master.getNodeId, master.getUri)
         val connection = getConnection(master.getNodeId)
         clusterConnections.put(master.getNodeId, connection)
       }
+
+      logger.debug(s"Reshard cluster with new master cluster connections for nodes: ${clusterConnections.keySet().toString}")
 
       val sourceNodes = masterNodes.filterNot(_ == targetNode)
 
