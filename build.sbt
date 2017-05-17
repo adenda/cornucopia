@@ -2,7 +2,7 @@ name := "cornucopia"
 organization := "com.github.kliewkliew"
 
 //version := "1.1.2"
-version := "0.24-SNAPSHOT"
+version := "0.25-SNAPSHOT"
 
 scalaVersion := "2.11.8"
 
@@ -34,9 +34,13 @@ libraryDependencies ++= Seq(
 // ------------------------------------------------ //
 // ------------- Docker configuration ------------- //
 // ------------------------------------------------ //
+import NativePackagerHelper._
+
+mappings in Universal ++= directory( baseDirectory.value / "src" / "main" / "resources" )
 
 javaOptions in Universal ++= Seq(
-  "-Dconfig.file=etc/container.conf"
+  "-Dconfig.file=etc/container.conf",
+  "-Dlog4j.configuration=file:/usr/local/etc/log4j.properties"
 )
 
 packageName in Docker := packageName.value
