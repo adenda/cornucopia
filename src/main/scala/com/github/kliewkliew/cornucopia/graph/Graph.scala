@@ -12,7 +12,7 @@ import com.github.kliewkliew.cornucopia.redis._
 import com.github.kliewkliew.salad.SaladClusterAPI
 import com.github.kliewkliew.cornucopia.Config.ReshardTableConfig._
 import com.github.kliewkliew.cornucopia.redis.ReshardTable._
-import com.lambdaworks.redis.RedisURI
+import com.lambdaworks.redis.{RedisException, RedisURI}
 import com.lambdaworks.redis.cluster.models.partitions.RedisClusterNode
 import com.lambdaworks.redis.models.role.RedisInstance.Role
 
@@ -21,12 +21,13 @@ import scala.collection.mutable
 import scala.collection.JavaConversions._
 import scala.language.implicitConversions
 import scala.concurrent.{ExecutionContext, Future}
-import akka.stream.scaladsl.{Flow, GraphDSL, Merge, MergePreferred, Partition, RunnableGraph, Sink, Broadcast}
+import akka.stream.scaladsl.{Broadcast, Flow, GraphDSL, Merge, MergePreferred, Partition, RunnableGraph, Sink}
 import com.github.kliewkliew.cornucopia.Config
 // TO-DO: put config someplace else
 
 trait CornucopiaGraph {
   import scala.concurrent.ExecutionContext.Implicits.global
+  import com.github.kliewkliew.cornucopia.CornucopiaException._
 
   protected val logger = LoggerFactory.getLogger(this.getClass)
 
@@ -70,7 +71,7 @@ trait CornucopiaGraph {
     .map(createRedisUri)
     .map(getNewSaladApi.canonicalizeURI)
     .groupedWithin(100, Config.Cornucopia.batchPeriod)
-    .mapAsync(1)(addNodesToCluster)
+    .mapAsync(1)(addNodesToCluster(_))
     .mapAsync(1)(waitForTopologyRefresh[Seq[RedisURI]])
     .map(_ => KeyValue(RESHARD.key, ""))
 
@@ -80,7 +81,7 @@ trait CornucopiaGraph {
     .map(createRedisUri)
     .map(getNewSaladApi.canonicalizeURI)
     .groupedWithin(100, Config.Cornucopia.batchPeriod)
-    .mapAsync(1)(addNodesToCluster)
+    .mapAsync(1)(addNodesToCluster(_))
     .mapAsync(1)(waitForTopologyRefresh[Seq[RedisURI]])
     .mapAsync(1)(findMasters)
     .mapAsync(1)(waitForTopologyRefresh[Unit])
@@ -166,16 +167,32 @@ trait CornucopiaGraph {
   }
 
   /**
-    * The entire cluster will meet the new nodes at the given URIs.
+    * The entire cluster will meet the new nodes at the given URIs. If the connection to a node fails, then retry
+    * until it succeeds.
     *
     * @param redisURIList The list of URI of the new nodes.
     * @param executionContext The thread dispatcher context.
     * @return The list of URI if the nodes were met. TODO: emit only the nodes that were successfully added.
     */
-  protected def addNodesToCluster(redisURIList: Seq[RedisURI])(implicit executionContext: ExecutionContext): Future[Seq[RedisURI]] = {
+  protected def addNodesToCluster(redisURIList: Seq[RedisURI], retries: Int = 0)(implicit executionContext: ExecutionContext): Future[Seq[RedisURI]] = {
+    addNodesToClusterPrime(redisURIList).recoverWith {
+      case e: CornucopiaRedisConnectionException =>
+        logger.error(s"${e.message}: retrying for number ${retries + 1}", e)
+        addNodesToCluster(redisURIList, retries + 1)
+    }
+  }
+
+  protected def addNodesToClusterPrime(redisURIList: Seq[RedisURI])(implicit executionContext: ExecutionContext): Future[Seq[RedisURI]] = {
     implicit val saladAPI = getNewSaladApi
+
+    def getRedisConnection(nodeId: String): Future[Salad] = {
+      getConnection(nodeId).recoverWith {
+        case e: RedisException => throw CornucopiaRedisConnectionException(s"Add nodes to cluster failed to get connection to node", e)
+      }
+    }
+
     saladAPI.clusterNodes.flatMap { allNodes =>
-      val getConnectionsToLiveNodes = allNodes.filter(_.isConnected).map(node => getConnection(node.getNodeId))
+      val getConnectionsToLiveNodes = allNodes.filter(_.isConnected).map(node => getRedisConnection(node.getNodeId))
       Future.sequence(getConnectionsToLiveNodes).flatMap { connections =>
         // Meet every new node from every old node.
         val metResults = for {

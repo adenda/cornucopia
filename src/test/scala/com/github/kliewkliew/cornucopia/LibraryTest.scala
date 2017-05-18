@@ -64,7 +64,7 @@ class LibraryTest extends TestKit(ActorSystem("LibraryTest"))
 
       override protected def reshardCluster(withoutNodes: Seq[String]): Future[Unit] = Future(Unit)
 
-      override protected def addNodesToCluster(redisURIList: Seq[RedisURI])
+      override protected def addNodesToCluster(redisURIList: Seq[RedisURI], retries: Int = 0)
                                               (implicit executionContext: ExecutionContext): Future[Seq[RedisURI]] = {
         Future(redisURIList)
       }
