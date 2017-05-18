@@ -24,6 +24,7 @@ import scala.concurrent.Await
 import scala.concurrent.{ExecutionContext, Future}
 import scala.util.{ Success, Failure }
 import redis.Connection.{newSaladAPI, Salad}
+import redis.ReshardTable
 import redis.ReshardTable._
 import com.lambdaworks.redis.cluster.models.partitions.RedisClusterNode
 
@@ -46,11 +47,12 @@ class ReshardTest extends TestKit(ActorSystem("ReshardTest"))
 
     val clusterNodes = List(node1, node2, node3)
 
-    val expectedReshardTable: ReshardTable = Map(
+    val expectedReshardTable: ReshardTableType = Map(
       "a" -> List(1,2),
       "b" -> List(7),
       "c" -> List(13)
     )
+
   }
 
   trait ReshardDebug {
@@ -67,9 +69,26 @@ class ReshardTest extends TestKit(ActorSystem("ReshardTest"))
   "Reshard cluster with new master" must {
     "calculate reshard table correctly" in new ReshardTableTest {
 
-      val reshardTable: ReshardTable = computeReshardTable(clusterNodes)
+      final implicit val ExpectedTotalNumberSlots: Int = 17
+      val reshardTable: ReshardTableType = computeReshardTable(clusterNodes)
 
       assert(reshardTable == expectedReshardTable)
+    }
+  }
+
+  "Reshard cluster with new master" must {
+    "throw a ReshardTableException if the expected total number of slots does not match the actual number of slots" in new ReshardTableTest {
+
+      final implicit val ExpectedTotalNumberSlots: Int = 1234
+
+      try {
+        val reshardTable: ReshardTableType = computeReshardTable(clusterNodes)
+        assert(false)
+      } catch {
+        case e: ReshardTableException => assert(true)
+        case _ => assert(false)
+      }
+
     }
   }
 

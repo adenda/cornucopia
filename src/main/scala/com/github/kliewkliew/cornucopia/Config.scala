@@ -57,4 +57,8 @@ object Config {
     val cornucopiaSink = Producer.plainSink(sinkSettings)
   }
 
+  object ReshardTableConfig {
+    final implicit val ExpectedTotalNumberSlots: Int = 16384
+  }
+
 }

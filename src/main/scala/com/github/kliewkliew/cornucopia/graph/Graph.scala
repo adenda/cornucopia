@@ -10,6 +10,7 @@ import org.slf4j.LoggerFactory
 import org.apache.kafka.clients.consumer.ConsumerRecord
 import com.github.kliewkliew.cornucopia.redis._
 import com.github.kliewkliew.salad.SaladClusterAPI
+import com.github.kliewkliew.cornucopia.Config.ReshardTableConfig._
 import com.github.kliewkliew.cornucopia.redis.ReshardTable._
 import com.lambdaworks.redis.RedisURI
 import com.lambdaworks.redis.cluster.models.partitions.RedisClusterNode
@@ -640,13 +641,16 @@ class CornucopiaActorSource extends CornucopiaGraph {
     .mapAsync(1)(_ => logTopology)
     .map(_ => KeyValue("", ""))
 
-  protected def reshardClusterPrime(sender: Option[ActorRef], newMasterURI: Option[RedisURI]): Future[Unit] = {
+  protected def reshardClusterPrime(sender: Option[ActorRef], newMasterURI: Option[RedisURI], retries: Int = 0): Future[Unit] = {
 
     def reshard(ref: ActorRef, uri: RedisURI): Future[Unit] = {
       reshardClusterWithNewMaster(uri) map { _: Unit =>
-        logger.info("Successfully resharded cluster, informing Kubernetes controller")
+        logger.info(s"Successfully resharded cluster ($retries retries), informing Kubernetes controller")
         ref ! Right("master")
       } recover {
+        case e: ReshardTableException =>
+          logger.error(s"There was a problem computing the reshard table, retrying for retry number ${retries + 1}:", e)
+          reshardClusterPrime(sender, newMasterURI, retries + 1)
         case ex: Throwable =>
           logger.error("Failed to reshard cluster, informing Kubernetes controller", ex)
           ref ! Left(s"${ex.toString}")
@@ -683,7 +687,12 @@ class CornucopiaActorSource extends CornucopiaGraph {
 
     saladAPI.masterNodes.flatMap { mn =>
       val masterNodes = mn.toList
+
+      logger.debug(s"Reshard table with new master master nodes: ${masterNodes.map(_.getNodeId)}")
+
       val liveMasters = masterNodes.filter(_.isConnected)
+
+      logger.debug(s"Reshard cluster with new master live masters: ${liveMasters.map(_.getNodeId)}")
 
       lazy val idToURI = new util.HashMap[String,RedisURI](liveMasters.length + 1, 1)
 
@@ -692,6 +701,7 @@ class CornucopiaActorSource extends CornucopiaGraph {
 
       val targetNode = masterNodes.filter(_.getUri == newMasterURI).head
 
+      logger.debug(s"Reshard cluster with new master target node: ${targetNode.getNodeId}")
 
       liveMasters.map { master =>
         idToURI.put(master.getNodeId, master.getUri)
@@ -702,6 +712,8 @@ class CornucopiaActorSource extends CornucopiaGraph {
       logger.debug(s"Reshard cluster with new master cluster connections for nodes: ${clusterConnections.keySet().toString}")
 
       val sourceNodes = masterNodes.filterNot(_ == targetNode)
+
+      logger.debug(s"Reshard cluster with new master source nodes: ${sourceNodes.map(_.getNodeId)}")
 
       val reshardTable = computeReshardTable(sourceNodes)
 

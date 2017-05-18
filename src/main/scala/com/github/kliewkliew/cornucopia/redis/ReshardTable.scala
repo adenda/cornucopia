@@ -7,15 +7,17 @@ object ReshardTable {
 
   type NodeId = String
   type Slot = Int
-  type ReshardTable = scala.collection.immutable.Map[NodeId, List[Slot]]
+  type ReshardTableType = scala.collection.immutable.Map[NodeId, List[Slot]]
+
+  case class ReshardTableException(private val message: String = "", private val cause: Throwable = None.orNull)
+    extends Exception(message, cause)
 
   case class LogicalNode(node: RedisClusterNode, slots: List[Int])
 
-  final val ExpectedTotalNumberSlots: Int = 16384
-
   private val logger = LoggerFactory.getLogger(this.getClass)
 
-  def computeReshardTable(sourceNodes: List[RedisClusterNode]): ReshardTable = {
+  def computeReshardTable(sourceNodes: List[RedisClusterNode])
+                         (implicit ExpectedTotalNumberSlots: Int): ReshardTableType = {
     import scala.collection.JavaConverters._
 
     val logicalNodes = sourceNodes.map { n =>
@@ -32,7 +34,7 @@ object ReshardTable {
     logger.debug(s"Reshard table total sources: $totalSourceSlots")
 
     if (totalSourceSlots != ExpectedTotalNumberSlots) {
-      logger.error(s"Reshard table total source slots is $totalSourceSlots, but is not equal to expected number $ExpectedTotalNumberSlots")
+      throw ReshardTableException(s"Reshard table total source slots is $totalSourceSlots, but is not equal to expected number $ExpectedTotalNumberSlots")
     }
 
     val numSlots = totalSourceSlots / (logicalNodes.size + 1) // total number of slots to move to target
@@ -44,7 +46,7 @@ object ReshardTable {
       else Math.floor((numSlots.toFloat / totalSourceSlots) * source.slots.size).toInt
     }
 
-    val reshardTable: ReshardTable = Map.empty[NodeId, List[Slot]]
+    val reshardTable: ReshardTableType = Map.empty[NodeId, List[Slot]]
 
     val table = sortedSources.zipWithIndex.foldLeft(reshardTable) { case (tbl, (source, i)) =>
       val sortedSlots = source.slots.sorted
