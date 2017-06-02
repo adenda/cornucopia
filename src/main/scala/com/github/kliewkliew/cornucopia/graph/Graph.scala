@@ -628,22 +628,37 @@ class CornucopiaActorSource extends CornucopiaGraph {
       val redisURIs = t._1
       val actorRefs = t._2
       findMasters(redisURIs) map { _ =>
-        actorRefs
+        (redisURIs, actorRefs)
       }
     })
-    .mapAsync(1)(waitForTopologyRefresh[Seq[Option[ActorRef]]])
-    .mapAsync(1)(signalSlavesAdded)
+    .mapAsync(1)(t => {
+      val redisURIs = t._1
+      val actorRefs = t._2
+      waitForTopologyRefresh2[Seq[RedisURI], Seq[Option[ActorRef]]](redisURIs, actorRefs)
+    })
+    .mapAsync(1)(t => signalSlavesAdded(t._1, t._2))
     .map(_ => KeyValue("", ""))
 
-  private def signalSlavesAdded(senders: Seq[Option[ActorRef]]): Future[Unit] = {
-    def signal(ref: ActorRef): Future[Unit] = {
+  private def signalSlavesAdded(uris: Seq[RedisURI], senders: Seq[Option[ActorRef]]): Future[Unit] = {
+    def signal(uri: RedisURI, ref: Option[ActorRef]): Future[Unit] = {
       Future {
-        ref ! Right("slave")
+        ref match {
+          case Some(sender) => sender ! Right(("slave", uri.getHost))
+          case None => Unit
+        }
       }
     }
     val flattened = senders.flatten
     if (flattened.isEmpty) Future(Unit)
-    else Future.reduce(senders.flatten.map(signal))((_, _) => Unit)
+    else {
+      val zipped = uris zip senders
+
+      Future.reduce(
+        zipped map {
+          case (uri: RedisURI, sender: Option[ActorRef]) => signal(uri, sender)
+        }
+      )((_, _) => Unit)
+    }
   }
 
   override protected def streamReshard(implicit executionContext: ExecutionContext) = Flow[KeyValue]
@@ -663,7 +678,7 @@ class CornucopiaActorSource extends CornucopiaGraph {
     def reshard(ref: ActorRef, uri: RedisURI): Future[Unit] = {
       reshardClusterWithNewMaster(uri) map { _: Unit =>
         logger.info(s"Successfully resharded cluster ($retries retries), informing Kubernetes controller")
-        ref ! Right("master")
+        ref ! Right(("master", uri.getHost))
       } recover {
         case e: ReshardTableException =>
           logger.error(s"There was a problem computing the reshard table, retrying for retry number ${retries + 1}:", e)
