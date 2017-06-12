@@ -1,6 +1,6 @@
 package com.github.kliewkliew.cornucopia.http
 
-import scala.concurrent.Future
+import scala.concurrent.{ExecutionContextExecutor, Future}
 import akka.actor.{Actor, ActorSystem, Props}
 import akka.event.Logging
 import akka.util.Timeout
@@ -9,15 +9,16 @@ import akka.http.scaladsl.Http.ServerBinding
 import akka.http.scaladsl.server.Directives._
 import akka.stream.ActorMaterializer
 import org.slf4j.LoggerFactory
-import com.typesafe.config.{ Config, ConfigFactory }
+import com.typesafe.config.{Config, ConfigFactory}
+import com.github.kliewkliew.cornucopia.actors.SharedActorSystem._
 
 object Server extends RequestTimeout {
   val config = ConfigFactory.load()
   val host = config.getString("cornucopia.http.host")
   val port = config.getInt("cornucopia.http.port")
 
-  implicit val system = ActorSystem()
-  implicit val ec = system.dispatcher
+  implicit val system: ActorSystem = sharedActorSystem
+  implicit val ec: ExecutionContextExecutor = system.dispatcher
 
   val api = new RestApi(system, requestTimeout(config)).routes
 

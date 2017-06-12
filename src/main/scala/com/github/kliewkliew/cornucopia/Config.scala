@@ -61,4 +61,7 @@ object Config {
     final implicit val ExpectedTotalNumberSlots: Int = 16384
   }
 
+  val reshardTimeout: Int = ConfigFactory.load().getConfig("cornucopia").getInt("reshard.timeout")
+
+  val migrateSlotTimeout: Int = ConfigFactory.load().getConfig("cornucopia").getInt("reshard.migrate.slot.timeout")
 }

@@ -4,6 +4,7 @@ import java.util
 import java.util.concurrent.atomic.AtomicInteger
 
 import akka.actor._
+import akka.pattern.ask
 import akka.stream.{ClosedShape, FlowShape, ThrottleMode}
 import com.github.kliewkliew.cornucopia.redis.Connection.{CodecType, Salad, getConnection, newSaladAPI}
 import org.slf4j.LoggerFactory
@@ -23,6 +24,7 @@ import scala.language.implicitConversions
 import scala.concurrent.{ExecutionContext, Future}
 import akka.stream.scaladsl.{Broadcast, Flow, GraphDSL, Merge, MergePreferred, Partition, RunnableGraph, Sink}
 import com.github.kliewkliew.cornucopia.Config
+import com.github.kliewkliew.cornucopia.actors.{RedisCommandRouter, SharedActorSystem}
 // TO-DO: put config someplace else
 
 trait CornucopiaGraph {
@@ -590,6 +592,9 @@ class CornucopiaActorSource extends CornucopiaGraph {
 
   protected type ActorRecord = Task
 
+  val actorSystem = SharedActorSystem.sharedActorSystem
+  protected val redisCommandRouter = actorSystem.actorOf(RedisCommandRouter.props, "redisCommandRouter")
+
   // Add a master node to the cluster.
   override def streamAddMaster(implicit executionContext: ExecutionContext) = Flow[KeyValue]
     .map(kv => (kv.value, kv.senderRef))
@@ -712,6 +717,7 @@ class CornucopiaActorSource extends CornucopiaGraph {
 
   protected def reshardClusterWithNewMaster(newMasterURI: RedisURI)
   : Future[Unit] = {
+
     // Execute futures using a thread pool so we don't run out of memory due to futures.
     implicit val executionContext = Config.Consumer.actorSystem.dispatchers.lookup("akka.actor.resharding-dispatcher")
 
@@ -720,7 +726,7 @@ class CornucopiaActorSource extends CornucopiaGraph {
     saladAPI.masterNodes.flatMap { mn =>
       val masterNodes = mn.toList
 
-      logger.debug(s"Reshard table with new master master nodes: ${masterNodes.map(_.getNodeId)}")
+      logger.debug(s"Reshard table with new maste nodes: ${masterNodes.map(_.getNodeId)}")
 
       val liveMasters = masterNodes.filter(_.isConnected)
 
@@ -751,14 +757,25 @@ class CornucopiaActorSource extends CornucopiaGraph {
 
       printReshardTable(reshardTable)
 
-      val migrateResults = for {
-        (sourceNodeId, slots) <- reshardTable
-        slot <- slots
-      } yield {
-        migrateSlot(slot, sourceNodeId, targetNode.getNodeId, newMasterURI, liveMasters, clusterConnections)
+      // Since migrating many slots causes many requests to redis cluster nodes, we should have a way to throttle
+      // the number of parallel futures executing at any given time so that we don't flood redis nodes with too many
+      // simultaneous requests.
+      import akka.pattern.ask
+      import akka.util.Timeout
+      import scala.concurrent.duration._
+      import RedisCommandRouter._
+
+      implicit val timeout = Timeout(Config.reshardTimeout seconds)
+
+      val migrateSlotFn = migrateSlot(_: Int, _: String, _: String, newMasterURI, liveMasters, clusterConnections)
+
+      val future = redisCommandRouter ? ReshardCluster(targetNode.getNodeId, reshardTable, migrateSlotFn)
+
+      future.map{ msg =>
+        logger.info(s"Reshard cluster was a success: $msg")
+        Unit
       }
 
-      Future.fold(migrateResults)()((_, b) => b)
     }
   }
 
