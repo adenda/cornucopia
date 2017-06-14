@@ -3,12 +3,11 @@ package com.github.kliewkliew.cornucopia.graph
 import java.util
 import java.util.concurrent.atomic.AtomicInteger
 
+import akka.NotUsed
 import akka.actor._
-import akka.pattern.ask
-import akka.stream.{ClosedShape, FlowShape, ThrottleMode}
+import akka.stream.{FlowShape, ThrottleMode}
 import com.github.kliewkliew.cornucopia.redis.Connection.{CodecType, Salad, getConnection, newSaladAPI}
 import org.slf4j.LoggerFactory
-import org.apache.kafka.clients.consumer.ConsumerRecord
 import com.github.kliewkliew.cornucopia.redis._
 import com.github.kliewkliew.salad.SaladClusterAPI
 import com.github.kliewkliew.cornucopia.Config.ReshardTableConfig._
@@ -19,13 +18,11 @@ import com.lambdaworks.redis.models.role.RedisInstance.Role
 
 import collection.JavaConverters._
 import scala.collection.mutable
-import scala.collection.JavaConversions._
 import scala.language.implicitConversions
 import scala.concurrent.{ExecutionContext, Future}
-import akka.stream.scaladsl.{Broadcast, Flow, GraphDSL, Merge, MergePreferred, Partition, RunnableGraph, Sink}
+import akka.stream.scaladsl.{Flow, GraphDSL, Merge, MergePreferred, Partition, Sink}
 import com.github.kliewkliew.cornucopia.Config
 import com.github.kliewkliew.cornucopia.actors.{RedisCommandRouter, SharedActorSystem}
-// TO-DO: put config someplace else
 
 trait CornucopiaGraph {
   import scala.concurrent.ExecutionContext.Implicits.global
@@ -67,15 +64,7 @@ trait CornucopiaGraph {
     else RedisURI.create(uri)
   }
 
-  // Add a master node to the cluster.
-  def streamAddMaster(implicit executionContext: ExecutionContext) = Flow[KeyValue]
-    .map(_.value)
-    .map(createRedisUri)
-    .map(getNewSaladApi.canonicalizeURI)
-    .groupedWithin(100, Config.Cornucopia.batchPeriod)
-    .mapAsync(1)(addNodesToCluster(_))
-    .mapAsync(1)(waitForTopologyRefresh[Seq[RedisURI]])
-    .map(_ => KeyValue(RESHARD.key, ""))
+  protected def streamAddMaster(implicit executionContext: ExecutionContext): Flow[KeyValue, KeyValue, NotUsed]
 
   // Add a slave node to the cluster, replicating the master that has the fewest slaves.
   def streamAddSlave(implicit executionContext: ExecutionContext) = Flow[KeyValue]
@@ -102,18 +91,6 @@ trait CornucopiaGraph {
     .map(_.value)
     .groupedWithin(100, Config.Cornucopia.batchPeriod)
     .mapAsync(1)(forgetNodes)
-    .mapAsync(1)(waitForTopologyRefresh[Unit])
-    .mapAsync(1)(_ => logTopology)
-    .map(_ => KeyValue("", ""))
-
-  // Redistribute the hash slots among all nodes in the cluster.
-  // Execute slot redistribution at most once per configured interval.
-  // Combine multiple requests into one request.
-  protected def streamReshard(implicit executionContext: ExecutionContext) = Flow[KeyValue]
-    .map(record => Seq(record.value))
-    .conflate((seq1, seq2) => seq1 ++ seq2)
-    .throttle(1, Config.Cornucopia.minReshardWait, 1, ThrottleMode.Shaping)
-    .mapAsync(1)(reshardCluster)
     .mapAsync(1)(waitForTopologyRefresh[Unit])
     .mapAsync(1)(_ => logTopology)
     .map(_ => KeyValue("", ""))
@@ -272,21 +249,6 @@ trait CornucopiaGraph {
   }
 
   /**
-    * Safely remove a master by redistributing its hash slots before blacklisting it from the cluster.
-    * The data is given time to migrate as configured in `cornucopia.grace.period`.
-    *
-    * @param withoutNodes The list of ids of the master nodes that will be removed from the cluster.
-    * @param executionContext The thread dispatcher context.
-    * @return Indicate that the hash slots were redistributed and the master removed from the cluster.
-    */
-  protected def removeMasters(withoutNodes: Seq[String])(implicit executionContext: ExecutionContext): Future[Unit] = {
-    val reshardDone = reshardCluster(withoutNodes).map { _ =>
-      scala.concurrent.blocking(Thread.sleep(Config.Cornucopia.gracePeriod)) // Allow data to migrate.
-    }
-    reshardDone.flatMap(_ => forgetNodes(withoutNodes))
-  }
-
-  /**
     * Notify all nodes in the cluster to forget this node.
     *
     * @param withoutNodes The list of ids of nodes to be forgotten by the cluster.
@@ -321,76 +283,6 @@ trait CornucopiaGraph {
         Future.sequence(forgetResults).map(x => x)
       }
     }
-
-
-  /**
-    * Reshard the cluster using a view of thecluster consisting of a subset of master nodes.
-    *
-    * @param withoutNodes The list of ids of nodes that will not be assigned hash slots. Note that this is not used
-    *                     (it is empty) when we add a new master node and reshard.
-    * @return Boolean indicating that all hash slots were reassigned successfully.
-    */
-  protected def reshardCluster(withoutNodes: Seq[String])
-  : Future[Unit] = {
-    // Execute futures using a thread pool so we don't run out of memory due to futures.
-    implicit val executionContext = Config.Consumer.actorSystem.dispatchers.lookup("akka.actor.resharding-dispatcher")
-    implicit val saladAPI = getNewSaladApi
-    saladAPI.masterNodes.flatMap { masterNodes =>
-
-      val liveMasters = masterNodes.filter(_.isConnected)
-      lazy val idToURI = new util.HashMap[String,RedisURI](liveMasters.length + 1, 1)
-      // Re-use cluster connections so we don't exceed file-handle limit or waste resources.
-      lazy val clusterConnections = new util.HashMap[String,Future[SaladClusterAPI[CodecType,CodecType]]](liveMasters.length + 1, 1)
-      liveMasters.map { master =>
-        idToURI.put(master.getNodeId, master.getUri)
-        clusterConnections.put(master.getNodeId, getConnection(master.getNodeId))
-      }
-
-      // Remove dead nodes. This may generate WARN logs if some nodes already forgot the dead node.
-      val deadMastersIds = masterNodes.filterNot(_.isConnected).map(_.getNodeId)
-      logger.info(s"Dead nodes: $deadMastersIds")
-      forgetNodes(deadMastersIds)
-
-      // Migrate the data.
-      val assignableMasters = liveMasters.filterNot(masterNode => withoutNodes.contains(masterNode.getNodeId))
-      logger.info(s"Resharding cluster with ${assignableMasters.map(_.getNodeId)} without ${withoutNodes ++ deadMastersIds}")
-      val migrateResults = liveMasters.flatMap { node =>
-        val (sourceNodeId, slotList) = (node.getNodeId, node.getSlots.toList.map(_.toInt))
-        logger.debug(s"Migrating data from $sourceNodeId among slots $slotList")
-        slotList.map { slot =>
-          val destinationNodeId = slotNode(slot, assignableMasters)
-          migrateSlot(
-            slot,
-            sourceNodeId, destinationNodeId, idToURI.get(destinationNodeId),
-            assignableMasters.toList, clusterConnections)
-        }
-      }
-      val finalMigrateResult = Future.sequence(migrateResults)
-      finalMigrateResult.onFailure { case e => logger.error(s"Failed to migrate hash slot data", e) }
-      finalMigrateResult.onSuccess { case _ => logger.info(s"Migrated hash slot data") }
-      // We attempted to migrate the data but do not prevent slot reassignment if migration fails.
-      // We may lose prior data but we ensure that all slots are assigned.
-      finalMigrateResult.onComplete { case _ =>
-        // This is broken anyways
-        //List.range(0, 16384).map(notifySlotAssignment(_, assignableMasters))
-        Unit
-      }
-      finalMigrateResult.flatMap(_ => forgetNodes(withoutNodes))
-    }
-  }
-
-  // TODO: Put this method out of its misery
-  // TODO: pass slotNode as a lambda to migrateSlot and notifySlotAssignment.
-  // TODO: more efficient slot assignment to prevent data migration.
-  /**
-    * Choose a master node for a slot.
-    *
-    * @param slot The slot to be assigned.
-    * @param masters The list of masters that can be assigned slots.
-    * @return The node id of the chosen master.
-    */
-  protected def slotNode(slot: Int, masters: mutable.Buffer[RedisClusterNode]): String =
-    masters(slot % masters.length).getNodeId
 
   /**
     * Migrate all keys in a slot from the source node to the destination node and update the slot assignment on the
@@ -542,61 +434,19 @@ trait CornucopiaGraph {
   }
 }
 
-class CornucopiaKafkaSource extends CornucopiaGraph {
-  import Config.Consumer.materializer
-
-  private type KafkaRecord = ConsumerRecord[String, String]
-
-  private def extractKeyValue = Flow[KafkaRecord]
-    .map[KeyValue](record => KeyValue(record.key, record.value))
-
-  def run = RunnableGraph.fromGraph(GraphDSL.create() { implicit builder =>
-    import scala.concurrent.ExecutionContext.Implicits.global
-    import GraphDSL.Implicits._
-
-    val in = Config.Consumer.cornucopiaKafkaSource
-    val out = Sink.ignore
-
-    val mergeFeedback = builder.add(MergePreferred[KeyValue](2))
-
-    val partition = builder.add(Partition[KeyValue](
-      5, kv => partitionEvents(kv.key)))
-
-    val kv = builder.add(extractKeyValue)
-
-    val partitionRm = builder.add(Partition[KeyValue](
-      3, kv => partitionNodeRemoval(kv.key)
-    ))
-
-    in                                      ~> kv
-    kv                                      ~> mergeFeedback.preferred
-    mergeFeedback.out                       ~> partition
-    partition.out(ADD_MASTER.ordinal)       ~> streamAddMaster      ~> mergeFeedback.in(0)
-    partition.out(ADD_SLAVE.ordinal)        ~> streamAddSlave       ~> out
-    partition.out(REMOVE_NODE.ordinal)      ~> streamRemoveNode     ~> partitionRm
-    partitionRm.out(REMOVE_MASTER.ordinal)  ~> mergeFeedback.in(1)
-    partitionRm.out(REMOVE_SLAVE.ordinal)   ~> streamRemoveSlave    ~> out
-    partitionRm.out(UNSUPPORTED.ordinal)    ~> unsupportedOperation ~> out
-    partition.out(RESHARD.ordinal)          ~> streamReshard        ~> out
-    partition.out(UNSUPPORTED.ordinal)      ~> unsupportedOperation ~> out
-
-    ClosedShape
-  }).run()
-
-}
-
 class CornucopiaActorSource extends CornucopiaGraph {
-  import Config.Consumer.materializer
+  import Config.materializer
   import com.github.kliewkliew.cornucopia.actors.CornucopiaSource.Task
   import scala.concurrent.ExecutionContext.Implicits.global
 
   protected type ActorRecord = Task
 
   val actorSystem = SharedActorSystem.sharedActorSystem
+
   protected val redisCommandRouter = actorSystem.actorOf(RedisCommandRouter.props, "redisCommandRouter")
 
   // Add a master node to the cluster.
-  override def streamAddMaster(implicit executionContext: ExecutionContext) = Flow[KeyValue]
+  override def streamAddMaster(implicit executionContext: ExecutionContext): Flow[KeyValue, KeyValue, NotUsed] = Flow[KeyValue]
     .map(kv => (kv.value, kv.senderRef))
     .map(t => (createRedisUri(t._1), t._2) )
     .map(t => (getNewSaladApi.canonicalizeURI(t._1), t._2))
@@ -666,7 +516,7 @@ class CornucopiaActorSource extends CornucopiaGraph {
     }
   }
 
-  override protected def streamReshard(implicit executionContext: ExecutionContext) = Flow[KeyValue]
+  protected def streamReshard(implicit executionContext: ExecutionContext): Flow[KeyValue, KeyValue, NotUsed] = Flow[KeyValue]
     .map(kv => (kv.senderRef, kv.newMasterURI))
     .throttle(1, Config.Cornucopia.minReshardWait, 1, ThrottleMode.Shaping)
     .mapAsync(1)(t => {
@@ -719,7 +569,7 @@ class CornucopiaActorSource extends CornucopiaGraph {
   : Future[Unit] = {
 
     // Execute futures using a thread pool so we don't run out of memory due to futures.
-    implicit val executionContext = Config.Consumer.actorSystem.dispatchers.lookup("akka.actor.resharding-dispatcher")
+    implicit val executionContext = Config.actorSystem.dispatchers.lookup("akka.actor.resharding-dispatcher")
 
     implicit val saladAPI = getNewSaladApi
 
@@ -815,7 +665,7 @@ class CornucopiaActorSource extends CornucopiaGraph {
     FlowShape(taskSource.in, fanIn.out)
   })
 
-  protected val cornucopiaSource = Config.Consumer.cornucopiaActorSource
+  protected val cornucopiaSource = Config.cornucopiaActorSource
 
   def ref: ActorRef = processTask
     .to(Sink.ignore)

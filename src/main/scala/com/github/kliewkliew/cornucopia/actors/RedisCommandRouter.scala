@@ -44,7 +44,7 @@ class RedisCommandRouter extends Actor {
 
   def reshardCluster(targetNodeId: String, reshardTable: ReshardTableType, fn: (Int, String, String) => Future[Unit], ref: ActorRef) = {
     implicit val timeout = Timeout(Config.migrateSlotTimeout seconds)
-    implicit val executionContext = Config.Consumer.actorSystem.dispatchers.lookup("akka.actor.resharding-dispatcher")
+    implicit val executionContext = Config.actorSystem.dispatchers.lookup("akka.actor.resharding-dispatcher")
 
     val migrateResults = for {
       (sourceNodeId, slots) <- reshardTable
@@ -68,7 +68,7 @@ class RedisCommandRouter extends Actor {
 
 class Worker extends Actor {
   import RedisCommandRouter._
-  implicit val executionContext = Config.Consumer.actorSystem.dispatchers.lookup("akka.actor.resharding-dispatcher")
+  implicit val executionContext = Config.actorSystem.dispatchers.lookup("akka.actor.resharding-dispatcher")
 
   protected val logger = LoggerFactory.getLogger(this.getClass)
 

@@ -11,9 +11,6 @@ object Microservice {
     val logger = LoggerFactory.getLogger(this.getClass)
 
     microserviceType match {
-      case "kafka" =>
-        logger.info("Using kafka as the microservice source")
-        new graph.CornucopiaKafkaSource().run
       case "http" =>
         logger.info("Using http server as the microservice source")
         Server.start

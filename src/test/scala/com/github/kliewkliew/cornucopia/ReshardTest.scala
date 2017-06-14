@@ -86,7 +86,7 @@ class ReshardTest extends TestKit(ActorSystem("ReshardTest"))
         assert(false)
       } catch {
         case e: ReshardTableException => assert(true)
-        case _ => assert(false)
+        case _: Throwable => assert(false)
       }
 
     }
@@ -107,7 +107,7 @@ class ReshardTest extends TestKit(ActorSystem("ReshardTest"))
       future.onComplete {
         case Failure(_) => assert(false)
         case Success(msg) =>
-          assert(msg == Right("master"))
+          assert(msg == Right("master", redisUri))
       }
 
       Await.ready(future, timeout.duration)
