@@ -1,6 +1,8 @@
 # Cornucopia
 
-A microservice and library for auto-sharding Redis Cluster. Implemented on Akka Streams, with Salad wrapping the Java 8 Lettuce API for Redis.
+A microservice and library for auto-sharding Redis Cluster. Implemented on Akka Streams, with Salad wrapping the Java 8 Lettuce API for Redis. 
+
+This project is originally a fork from [`kliewkliew/cornucopia`](https://github.com/kliewkliew/cornucopia).
 
 ## Operations
 
