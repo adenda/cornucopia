@@ -1,6 +1,7 @@
 package com.github.kliewkliew.cornucopia
 
 import akka.stream.scaladsl.Source
+import akka.actor.{ActorSystem, ActorRef}
 import akka.stream.{ActorMaterializer, ActorMaterializerSettings, Supervision}
 import com.github.kliewkliew.cornucopia.actors.CornucopiaSource
 import com.typesafe.config.ConfigFactory
@@ -12,14 +13,13 @@ object Config {
 
   object Cornucopia {
     private val config = ConfigFactory.load().getConfig("cornucopia")
-    val minReshardWait = config.getInt("reshard.interval").seconds
-    val gracePeriod = config.getInt("grace.period") * 1000
-    val refreshTimeout = config.getInt("refresh.timeout") * 1000
-    val batchPeriod = config.getInt("batch.period").seconds
-    val source = config.getString("source")
+    val minReshardWait: FiniteDuration = config.getInt("reshard.interval").seconds
+    val gracePeriod: Int = config.getInt("grace.period") * 1000
+    val refreshTimeout: Int = config.getInt("refresh.timeout") * 1000
+    val batchPeriod: FiniteDuration = config.getInt("batch.period").seconds
   }
 
-  implicit val actorSystem = sharedActorSystem
+  implicit val actorSystem: ActorSystem = sharedActorSystem
 
   // Log failures and resume processing
   private val decider: Supervision.Decider = { e =>
@@ -27,12 +27,14 @@ object Config {
     Supervision.Resume
   }
 
-  private val materializerSettings = ActorMaterializerSettings(actorSystem).withSupervisionStrategy(decider)
+  private val materializerSettings: ActorMaterializerSettings =
+    ActorMaterializerSettings(actorSystem).withSupervisionStrategy(decider)
 
-  implicit val materializer = ActorMaterializer(materializerSettings)(actorSystem)
+  implicit val materializer: ActorMaterializer = ActorMaterializer(materializerSettings)(actorSystem)
 
-  val cornucopiaActorProps = CornucopiaSource.props
-  val cornucopiaActorSource = Source.actorPublisher[CornucopiaSource.Task](cornucopiaActorProps)
+  private val cornucopiaActorProps = CornucopiaSource.props
+  val cornucopiaActorSource: Source[CornucopiaSource.Task, ActorRef] =
+    Source.actorPublisher[CornucopiaSource.Task](cornucopiaActorProps)
 
   object ReshardTableConfig {
     final implicit val ExpectedTotalNumberSlots: Int = 16384

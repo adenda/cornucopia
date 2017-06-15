@@ -9,7 +9,7 @@ import akka.stream.{FlowShape, ThrottleMode}
 import com.github.kliewkliew.cornucopia.redis.Connection.{CodecType, Salad, getConnection, newSaladAPI}
 import org.slf4j.LoggerFactory
 import com.github.kliewkliew.cornucopia.redis._
-import com.github.kliewkliew.salad.SaladClusterAPI
+import com.adendamedia.salad.SaladClusterAPI
 import com.github.kliewkliew.cornucopia.Config.ReshardTableConfig._
 import com.github.kliewkliew.cornucopia.redis.ReshardTable._
 import com.lambdaworks.redis.{RedisException, RedisURI}
@@ -67,17 +67,7 @@ trait CornucopiaGraph {
   protected def streamAddMaster(implicit executionContext: ExecutionContext): Flow[KeyValue, KeyValue, NotUsed]
 
   // Add a slave node to the cluster, replicating the master that has the fewest slaves.
-  def streamAddSlave(implicit executionContext: ExecutionContext) = Flow[KeyValue]
-    .map(_.value)
-    .map(createRedisUri)
-    .map(getNewSaladApi.canonicalizeURI)
-    .groupedWithin(100, Config.Cornucopia.batchPeriod)
-    .mapAsync(1)(addNodesToCluster(_))
-    .mapAsync(1)(waitForTopologyRefresh[Seq[RedisURI]])
-    .mapAsync(1)(findMasters)
-    .mapAsync(1)(waitForTopologyRefresh[Unit])
-    .mapAsync(1)(_ => logTopology)
-    .map(_ => KeyValue("", ""))
+  protected def streamAddSlave(implicit executionContext: ExecutionContext): Flow[KeyValue, KeyValue, NotUsed]
 
   // Emit a key-value pair indicating the node type and URI.
   protected def streamRemoveNode(implicit executionContext: ExecutionContext) = Flow[KeyValue]
@@ -308,7 +298,7 @@ trait CornucopiaGraph {
     def migrateSlotKeys(sourceConn: SaladClusterAPI[CodecType, CodecType],
                         destinationConn: SaladClusterAPI[CodecType, CodecType]): Future[Unit] = {
 
-      import com.github.kliewkliew.salad.serde.ByteArraySerdes._
+      import com.adendamedia.salad.serde.ByteArraySerdes._
 
       // get all the keys in the given slot
       val keyList = for {
@@ -359,7 +349,7 @@ trait CornucopiaGraph {
     }
 
     def setSlotAssignment(sourceConn: SaladClusterAPI[CodecType, CodecType],
-                        destinationConn: SaladClusterAPI[CodecType, CodecType]): Future[Unit] = {
+                          destinationConn: SaladClusterAPI[CodecType, CodecType]): Future[Unit] = {
       for {
         _ <- destinationConn.clusterSetSlotImporting(slot, sourceNodeId)
         _ <- sourceConn.clusterSetSlotMigrating(slot, destinationNodeId)
@@ -446,7 +436,7 @@ class CornucopiaActorSource extends CornucopiaGraph {
   protected val redisCommandRouter = actorSystem.actorOf(RedisCommandRouter.props, "redisCommandRouter")
 
   // Add a master node to the cluster.
-  override def streamAddMaster(implicit executionContext: ExecutionContext): Flow[KeyValue, KeyValue, NotUsed] = Flow[KeyValue]
+  override protected def streamAddMaster(implicit executionContext: ExecutionContext): Flow[KeyValue, KeyValue, NotUsed] = Flow[KeyValue]
     .map(kv => (kv.value, kv.senderRef))
     .map(t => (createRedisUri(t._1), t._2) )
     .map(t => (getNewSaladApi.canonicalizeURI(t._1), t._2))
@@ -466,7 +456,7 @@ class CornucopiaActorSource extends CornucopiaGraph {
     }
 
   // Add a slave node to the cluster, replicating the master that has the fewest slaves.
-  protected def streamAddSlavePrime(implicit executionContext: ExecutionContext) = Flow[KeyValue]
+  override protected def streamAddSlave(implicit executionContext: ExecutionContext): Flow[KeyValue, KeyValue, NotUsed] = Flow[KeyValue]
     .map(kv => (kv.value, kv.senderRef))
     .map(t => (createRedisUri(t._1), t._2) )
     .map(t => (getNewSaladApi.canonicalizeURI(t._1), t._2))
@@ -576,7 +566,7 @@ class CornucopiaActorSource extends CornucopiaGraph {
     saladAPI.masterNodes.flatMap { mn =>
       val masterNodes = mn.toList
 
-      logger.debug(s"Reshard table with new maste nodes: ${masterNodes.map(_.getNodeId)}")
+      logger.debug(s"Reshard table with new master nodes: ${masterNodes.map(_.getNodeId)}")
 
       val liveMasters = masterNodes.filter(_.isConnected)
 
@@ -654,7 +644,7 @@ class CornucopiaActorSource extends CornucopiaGraph {
     kv                                      ~> mergeFeedback.preferred
     mergeFeedback.out                       ~> partition
     partition.out(ADD_MASTER.ordinal)       ~> streamAddMaster      ~> mergeFeedback.in(0)
-    partition.out(ADD_SLAVE.ordinal)        ~> streamAddSlavePrime  ~> fanIn
+    partition.out(ADD_SLAVE.ordinal)        ~> streamAddSlave       ~> fanIn
     partition.out(REMOVE_NODE.ordinal)      ~> streamRemoveNode     ~> partitionRm
     partitionRm.out(REMOVE_MASTER.ordinal)  ~> mergeFeedback.in(1)
     partitionRm.out(REMOVE_SLAVE.ordinal)   ~> streamRemoveSlave    ~> fanIn

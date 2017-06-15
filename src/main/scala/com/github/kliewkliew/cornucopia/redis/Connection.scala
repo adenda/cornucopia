@@ -1,6 +1,6 @@
 package com.github.kliewkliew.cornucopia.redis
 
-import com.github.kliewkliew.salad.SaladClusterAPI
+import com.adendamedia.salad.SaladClusterAPI
 import com.lambdaworks.redis.{ReadFrom, RedisURI}
 import com.lambdaworks.redis.cluster.api.async.{RedisAdvancedClusterAsyncCommands, RedisClusterAsyncCommands}
 import com.lambdaworks.redis.cluster.{ClusterClientOptions, ClusterTopologyRefreshOptions, RedisClusterClient}

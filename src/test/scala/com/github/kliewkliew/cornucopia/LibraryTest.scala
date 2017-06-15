@@ -34,9 +34,6 @@ class LibraryTest extends TestKit(ActorSystem("LibraryTest"))
 
       override def getNewSaladApi: Salad = fakeSalad
 
-      override def streamAddSlave(implicit executionContext: ExecutionContext) =
-        Flow[KeyValue].map(_ => KeyValue("test", ""))
-
       override def streamRemoveNode(implicit executionContext: ExecutionContext) =
         Flow[KeyValue].map(_ => KeyValue("test", ""))
 
