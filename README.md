@@ -6,7 +6,7 @@ This project is originally a fork from [`kliewkliew/cornucopia`](https://github.
 
 ## Operations
 
-The following keys for Kafka messages correspond to operations to be performed in Cornucopia.
+The following keys for messages correspond to operations to be performed in Cornucopia.
 
 ### Add or Remove a Node
 
@@ -20,7 +20,7 @@ The value contained in the message is the URI (must be resolvable at the microse
 
 Cornucopia can be run as a stand-alone microservice. The interface to this microservice is a HTTP Rest interface.
 
-For example, assuming that the micro service is running on http port 9001 on localhost (which is the default). To add a new master node to the cluster on localhost:7006, run the following command:
+For example, assume that the micro service is running on HTTP port 9001 on localhost (which is the default). To add a new master node to the cluster on localhost:7006, run the following command:
 
     curl -X POST \
       http://localhost:9001/task \
@@ -53,7 +53,7 @@ For example, when testing with only two nodes, after adding the second node as a
 If you then try to remove the second node, there will be no masters left.
 The behaviour is more predictable as more nodes are added to the cluster.
 
-There may be multiple node ids (dead nodes that were not previously removed) assigned to one URI and Redis only returns one at a time so you may have remove the same URI multiple times to remove the correct node id.
+There may be multiple node ids (dead nodes that were not previously removed) assigned to one URI and Redis only returns one at a time so you may have to remove the same URI multiple times to remove the correct node id.
 
 ## Application configuration
 
