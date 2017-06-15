@@ -58,14 +58,21 @@ There may be multiple node ids (dead nodes that were not previously removed) ass
 ### Cornucopia configuration settings
 
 | Setting  | Description  |
-|:----------:|:--------------:|
-| `cornucopia.refresh.timeout` | Time (seconds) to wait for cluster topology changes to propagate. |
-| `cornucopia.batch.period` | Time (seconds) to wait for batches to accumulate before executing a job. |
-| `cornucopia.http.host` | The hostname where the Cornucopia microservice is run. |
-| `cornucopia.http.port` | The port on which the Cornucopia microservice is run. |
-| `cornucopia.reshard.interval` | Mininum time (seconds) to wait between reshard events.|
-| `cornucopia.reshard.timeout` | The maximum upper time limit (seconds) that the cluster must be resharded within without the resharding failing.|
-| `cornucopia.migrate.slot.timeout` | The maximum upper time limit (seconds) that a slot must be migrated from one node to another during resharding without slot migration failing.|
+|:----------|:--------------|
+| `cornucopia.refresh.timeout` | Time (seconds) to wait for cluster topology changes to propagate (default: 5 seconds).  |
+| `cornucopia.batch.period` | Time (seconds) to wait for batches to accumulate before executing a job (default: 5 seconds). |
+| `cornucopia.http.host` | The hostname where the Cornucopia microservice is run (default: localhost). |
+| `cornucopia.http.port` | The port on which the Cornucopia microservice is run (default: 9001). |
+| `cornucopia.reshard.interval` | Mininum time (seconds) to wait between reshard events (default: 60 seconds). |
+| `cornucopia.reshard.timeout` | The maximum upper time limit (seconds) that the cluster must be resharded within without the resharding failing (default: 300 seconds). |
+| `cornucopia.migrate.slot.timeout` | The maximum upper time limit (seconds) that a slot must be migrated from one node to another during resharding without slot migration failing. (default: 60 seconds) |
+
+### Redis configuration settings
+
+| Setting  | Description  |
+|:----------|:--------------|
+| `redis.cluster.seed.server.host` | Initial node-hostname from which the full cluster topology will be derived (default: localhost). |
+| `redis.cluster.seed.server.port` | Initial node-port from which the full cluster topology will be derived (default: 6379). |
 
 ## Auto-Scaling
 
