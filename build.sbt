@@ -26,8 +26,7 @@ libraryDependencies ++= Seq(
   "com.typesafe.akka" %% "akka-http-core"  % "2.4.11",
   "com.typesafe.akka" %% "akka-http-experimental"  % "2.4.11",
   "com.typesafe.akka" %% "akka-http-spray-json-experimental"  % "2.4.11",
-//  "com.github.kliewkliew" %% "salad" % "0.11.01",
-  "com.adenda" %% "salad" % "0.11.03",
+  "com.adendamedia" %% "salad" % "0.9.0",
   "org.slf4j" % "slf4j-log4j12" % "1.7.22"
 ) ++ testDependencies
 
