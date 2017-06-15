@@ -1,8 +1,8 @@
 name := "cornucopia"
-organization := "com.github.kliewkliew"
 
-//version := "1.1.2"
-version := "0.28-SNAPSHOT"
+organization := "com.adendamedia"
+
+version := "0.5.0"
 
 scalaVersion := "2.11.8"
 
@@ -30,6 +30,14 @@ libraryDependencies ++= Seq(
   "org.slf4j" % "slf4j-log4j12" % "1.7.22"
 ) ++ testDependencies
 
+// Add sonatype repository settings
+publishTo := Some(
+  if (isSnapshot.value)
+    Opts.resolver.sonatypeSnapshots
+  else
+    Opts.resolver.sonatypeStaging
+)
+
 // ------------------------------------------------ //
 // ------------- Docker configuration ------------- //
 // ------------------------------------------------ //
@@ -48,7 +56,7 @@ version in Docker := version.value
 
 dockerBaseImage := "openjdk"
 
-dockerRepository := Some("gcr.io/adenda-server-mongodb")
+dockerRepository := Some("adenda")
 
 defaultLinuxInstallLocation in Docker := "/usr/local"
 

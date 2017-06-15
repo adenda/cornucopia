@@ -1,4 +1,4 @@
-package com.github.kliewkliew.cornucopia
+package com.adendamedia.cornucopia
 
 object CornucopiaException {
   sealed trait CornucopiaException {

@@ -1,4 +1,4 @@
-package com.github.kliewkliew.cornucopia.graph
+package com.adendamedia.cornucopia.graph
 
 import java.util
 import java.util.concurrent.atomic.AtomicInteger
@@ -6,12 +6,12 @@ import java.util.concurrent.atomic.AtomicInteger
 import akka.NotUsed
 import akka.actor._
 import akka.stream.{FlowShape, ThrottleMode}
-import com.github.kliewkliew.cornucopia.redis.Connection.{CodecType, Salad, getConnection, newSaladAPI}
+import com.adendamedia.cornucopia.redis.Connection.{CodecType, Salad, getConnection, newSaladAPI}
 import org.slf4j.LoggerFactory
-import com.github.kliewkliew.cornucopia.redis._
+import com.adendamedia.cornucopia.redis._
 import com.adendamedia.salad.SaladClusterAPI
-import com.github.kliewkliew.cornucopia.Config.ReshardTableConfig._
-import com.github.kliewkliew.cornucopia.redis.ReshardTable._
+import com.adendamedia.cornucopia.Config.ReshardTableConfig._
+import com.adendamedia.cornucopia.redis.ReshardTable._
 import com.lambdaworks.redis.{RedisException, RedisURI}
 import com.lambdaworks.redis.cluster.models.partitions.RedisClusterNode
 import com.lambdaworks.redis.models.role.RedisInstance.Role
@@ -21,12 +21,12 @@ import scala.collection.mutable
 import scala.language.implicitConversions
 import scala.concurrent.{ExecutionContext, Future}
 import akka.stream.scaladsl.{Flow, GraphDSL, Merge, MergePreferred, Partition, Sink}
-import com.github.kliewkliew.cornucopia.Config
-import com.github.kliewkliew.cornucopia.actors.{RedisCommandRouter, SharedActorSystem}
+import com.adendamedia.cornucopia.Config
+import com.adendamedia.cornucopia.actors.{RedisCommandRouter, SharedActorSystem}
 
 trait CornucopiaGraph {
   import scala.concurrent.ExecutionContext.Implicits.global
-  import com.github.kliewkliew.cornucopia.CornucopiaException._
+  import com.adendamedia.cornucopia.CornucopiaException._
 
   protected val logger = LoggerFactory.getLogger(this.getClass)
 
@@ -426,7 +426,7 @@ trait CornucopiaGraph {
 
 class CornucopiaActorSource extends CornucopiaGraph {
   import Config.materializer
-  import com.github.kliewkliew.cornucopia.actors.CornucopiaSource.Task
+  import com.adendamedia.cornucopia.actors.CornucopiaSource.Task
   import scala.concurrent.ExecutionContext.Implicits.global
 
   protected type ActorRecord = Task

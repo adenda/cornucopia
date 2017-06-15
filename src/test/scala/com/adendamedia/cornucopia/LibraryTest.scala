@@ -1,8 +1,8 @@
-package com.github.kliewkliew.cornucopia
+package com.adendamedia.cornucopia
 
 import com.lambdaworks.redis.RedisURI
-import com.github.kliewkliew.cornucopia.redis.Connection.Salad
-import akka.testkit.{ TestKit, TestProbe}
+import com.adendamedia.cornucopia.redis.Connection.Salad
+import akka.testkit.{TestKit, TestProbe}
 import akka.actor.ActorSystem
 import akka.pattern.ask
 import akka.util.Timeout
@@ -10,12 +10,13 @@ import org.scalatest.mockito.MockitoSugar
 import org.scalatest.{BeforeAndAfterAll, MustMatchers, WordSpecLike}
 import org.mockito.Mockito._
 import org.mockito.Matchers._
-import com.github.kliewkliew.cornucopia.graph._
 import akka.stream.scaladsl.Flow
+import com.adendamedia.cornucopia.graph.CornucopiaActorSource
+
 import scala.concurrent.duration._
 import scala.concurrent.Await
 import scala.concurrent.{ExecutionContext, Future}
-import scala.util.{ Success, Failure }
+import scala.util.{Failure, Success}
 
 class LibraryTest extends TestKit(ActorSystem("LibraryTest"))
   with WordSpecLike with BeforeAndAfterAll with MustMatchers with MockitoSugar {

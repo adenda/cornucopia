@@ -1,4 +1,4 @@
-package com.github.kliewkliew.cornucopia.http
+package com.adendamedia.cornucopia.http
 
 import scala.concurrent.{ExecutionContextExecutor, Future}
 import akka.actor.{Actor, ActorSystem, Props}
@@ -10,7 +10,7 @@ import akka.http.scaladsl.server.Directives._
 import akka.stream.ActorMaterializer
 import org.slf4j.LoggerFactory
 import com.typesafe.config.{Config, ConfigFactory}
-import com.github.kliewkliew.cornucopia.actors.SharedActorSystem._
+import com.adendamedia.cornucopia.actors.SharedActorSystem._
 
 object Server extends RequestTimeout {
   val config = ConfigFactory.load()

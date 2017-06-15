@@ -1,4 +1,4 @@
-package com.github.kliewkliew.cornucopia.redis
+package com.adendamedia.cornucopia.redis
 
 import org.slf4j.LoggerFactory
 import com.lambdaworks.redis.cluster.models.partitions.RedisClusterNode

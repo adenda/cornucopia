@@ -1,4 +1,4 @@
-package com.github.kliewkliew.cornucopia.redis
+package com.adendamedia.cornucopia.redis
 
 import com.adendamedia.salad.SaladClusterAPI
 import com.lambdaworks.redis.{ReadFrom, RedisURI}

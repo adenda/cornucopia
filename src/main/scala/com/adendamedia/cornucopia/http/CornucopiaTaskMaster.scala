@@ -1,10 +1,9 @@
-package com.github.kliewkliew.cornucopia.http
+package com.adendamedia.cornucopia.http
 
 import akka.actor._
 import akka.util.Timeout
-import com.github.kliewkliew.cornucopia.actors._
-import com.github.kliewkliew.cornucopia.graph
-import com.github.kliewkliew.cornucopia.redis.Connection.{newSaladAPI, Salad}
+import com.adendamedia.cornucopia.graph.CornucopiaActorSource
+import com.adendamedia.cornucopia.redis.Connection.{Salad, newSaladAPI}
 
 object CornucopiaTaskMaster {
   def props(implicit timeout: Timeout) = Props(new CornucopiaTaskMaster)
@@ -14,10 +13,10 @@ object CornucopiaTaskMaster {
 
 class CornucopiaTaskMaster(implicit timeout: Timeout) extends Actor with ActorLogging {
   import CornucopiaTaskMaster._
-  import CornucopiaSource._
+  import com.adendamedia.cornucopia.actors.CornucopiaSource._
 
   implicit val newSaladAPIimpl: Salad = newSaladAPI
-  val ref: ActorRef = new graph.CornucopiaActorSource().ref
+  val ref: ActorRef = new CornucopiaActorSource().ref
 
   def receive = {
     case RestTask(operation, redisNodeIp) =>

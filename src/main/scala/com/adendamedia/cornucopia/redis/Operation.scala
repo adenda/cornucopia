@@ -1,4 +1,4 @@
-package com.github.kliewkliew.cornucopia.redis
+package com.adendamedia.cornucopia.redis
 
 trait Operation {
   def key: String

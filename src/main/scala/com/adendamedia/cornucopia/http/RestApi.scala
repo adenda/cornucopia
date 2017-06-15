@@ -1,4 +1,4 @@
-package com.github.kliewkliew.cornucopia.http
+package com.adendamedia.cornucopia.http
 
 import scala.concurrent.ExecutionContext
 

@@ -1,15 +1,14 @@
-package com.github.kliewkliew.cornucopia.actors
+package com.adendamedia.cornucopia.actors
 
 import akka.actor._
 import akka.routing.FromConfig
-import com.github.kliewkliew.cornucopia.Config
-import com.github.kliewkliew.cornucopia.redis.ReshardTable.ReshardTableType
+import com.adendamedia.cornucopia.redis.ReshardTable.ReshardTableType
 import org.slf4j.LoggerFactory
-
 import akka.pattern.ask
 import akka.util.Timeout
-import scala.concurrent.duration._
+import com.adendamedia.cornucopia.Config
 
+import scala.concurrent.duration._
 import scala.concurrent.Future
 
 object RedisCommandRouter {

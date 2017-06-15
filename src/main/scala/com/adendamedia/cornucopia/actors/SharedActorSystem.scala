@@ -1,4 +1,4 @@
-package com.github.kliewkliew.cornucopia.actors
+package com.adendamedia.cornucopia.actors
 
 import akka.actor.ActorSystem
 
