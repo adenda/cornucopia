@@ -74,7 +74,7 @@ There may be multiple node ids (dead nodes that were not previously removed) ass
 | Setting  | Description  |
 |:----------|:--------------|
 | `redis.cluster.seed.server.host` | Initial node-hostname from which the full cluster topology will be derived (default: localhost). |
-| `redis.cluster.seed.server.port` | Initial node-port from which the full cluster topology will be derived (default: 6379). |
+| `redis.cluster.seed.server.port` | Initial node-port from which the full cluster topology will be derived (default: 7000). |
 
 ## Auto-Scaling
 
