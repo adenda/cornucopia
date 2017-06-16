@@ -30,7 +30,7 @@ For example, assume that the micro service is running on HTTP port 9001 on local
     	"redisNodeIp": "redis://localhost:7006"
     }'
     
-#### Using Cornucopia as a library in your appliation
+#### Using Cornucopia as a library in your application
 
 Include Cornucopia in your `build.sbt` file: `"com.adendamedia" %% "cornucopia" % "0.5.0"`. Control messages are sent to Cornucopia using an ActorRef that must be imported.
 
