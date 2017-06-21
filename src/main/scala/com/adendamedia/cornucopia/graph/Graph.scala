@@ -354,6 +354,7 @@ trait CornucopiaGraph {
         _ <- destinationConn.clusterSetSlotImporting(slot, sourceNodeId)
         _ <- sourceConn.clusterSetSlotMigrating(slot, destinationNodeId)
       } yield {
+        logger.info(s"Successfully set slot assignment for slot $slot")
         Future(Unit)
       }
     }
@@ -361,6 +362,7 @@ trait CornucopiaGraph {
     destinationNodeId match {
       case `sourceNodeId` =>
         // Don't migrate if the source and destination are the same.
+        logger.warn(s"Ignoring attempt to migrate slot $slot because source and destination node are the same")
         Future(Unit)
       case _ =>
         for {
@@ -369,7 +371,7 @@ trait CornucopiaGraph {
           _ <- setSlotAssignment(sourceConnection, destinationConnection)
           _ <- migrateSlotKeys(sourceConnection, destinationConnection)
         } yield {
-          logger.debug(s"Migrate slot successful for slot $slot from source node $sourceNodeId to target node $destinationNodeId, notifying masters of new slot assignment")
+          logger.info(s"Migrate slot successful for slot $slot from source node $sourceNodeId to target node $destinationNodeId, notifying masters of new slot assignment")
           notifySlotAssignment(slot, destinationNodeId, masters)
         }
     }
