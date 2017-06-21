@@ -364,14 +364,17 @@ trait CornucopiaGraph {
         logger.warn(s"Ignoring attempt to migrate slot $slot because source and destination node are the same")
         Future(Unit)
       case _ =>
-        for {
+        val connections = for {
           sourceConnection <- clusterConnections.get(sourceNodeId)
           destinationConnection <- clusterConnections.get(destinationNodeId)
-          _ <- setSlotAssignment(sourceConnection, destinationConnection)
-          _ <- migrateSlotKeys(sourceConnection, destinationConnection)
+        } yield (sourceConnection, destinationConnection)
+        for {
+          (src, dst) <- connections
+          _ <- setSlotAssignment(src, dst)
+          _ <- migrateSlotKeys(src, dst)
+          _ <- notifySlotAssignment(slot, destinationNodeId, masters)
         } yield {
           logger.info(s"Migrate slot successful for slot $slot from source node $sourceNodeId to target node $destinationNodeId, notifying masters of new slot assignment")
-          notifySlotAssignment(slot, destinationNodeId, masters)
         }
     }
   }
