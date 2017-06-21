@@ -312,10 +312,6 @@ trait CornucopiaGraph {
         result <- sourceConn.migrate[CodecType](destinationURI, keys.toList)
       } yield result
 
-      migrate.onSuccess { case _ =>
-        logger.info(s"Successfully migrated slot $slot from $sourceNodeId to $destinationNodeId at ${destinationURI.getHost} on attempt $attempts")
-      }
-
       def handleFailedMigration(error: Throwable): Future[Unit] = {
         val errorString = error.toString
 
@@ -345,7 +341,10 @@ trait CornucopiaGraph {
         }
       }
 
-      migrate.recover { case e => handleFailedMigration(e) }
+      migrate map  { _ =>
+        logger.info(s"Successfully migrated slot $slot from $sourceNodeId to $destinationNodeId at ${destinationURI.getHost} on attempt $attempts")
+      } recover { case e => handleFailedMigration(e) }
+
     }
 
     def setSlotAssignment(sourceConn: SaladClusterAPI[CodecType, CodecType],
