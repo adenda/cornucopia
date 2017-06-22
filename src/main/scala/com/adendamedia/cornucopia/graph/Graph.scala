@@ -347,14 +347,20 @@ trait CornucopiaGraph {
     }
 
     def setSlotAssignment(sourceConn: SaladClusterAPI[CodecType, CodecType],
-                          destinationConn: SaladClusterAPI[CodecType, CodecType]): Future[Unit] = {
-      for {
+                          destinationConn: SaladClusterAPI[CodecType, CodecType],
+                          attempts: Int = 1): Future[Unit] = {
+      val ssa= for {
         _ <- destinationConn.clusterSetSlotImporting(slot, sourceNodeId)
         _ <- sourceConn.clusterSetSlotMigrating(slot, destinationNodeId)
-      } yield {
-        logger.info(s"Successfully set slot assignment for slot $slot")
-        Future(Unit)
+      } yield { }
+
+      ssa map { _ =>
+        logger.info(s"Successfully set slot assignment for slot $slot on attempt $attempts")
+      } recover { case e =>
+        logger.error(s"There was a problem setting slot assignment for slot $slot, retrying for attempt $attempts: ${e.toString}")
+        setSlotAssignment(sourceConn, destinationConn, attempts + 1)
       }
+
     }
 
     destinationNodeId match {
