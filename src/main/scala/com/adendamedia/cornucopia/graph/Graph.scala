@@ -330,7 +330,10 @@ trait CornucopiaGraph {
           migrateReplace
         } else if (findError(errorString, "CLUSTERDOWN")) {
           logger.error(s"Failed to migrate slot $slot from $sourceNodeId to $destinationNodeId at ${destinationURI.getHost} (CLUSTERDOWN): Retrying for attempt $attempts")
-          migrateSlotKeys(sourceConn, destinationConn, attempts + 1)
+          for {
+            src <- clusterConnections.get(sourceNodeId)
+            dst <- clusterConnections.get(destinationNodeId)
+          } yield migrateSlotKeys(src, dst, attempts + 1)
         } else if (findError(errorString, "MOVED")) {
           logger.error(s"Failed to migrate slot $slot from $sourceNodeId to $destinationNodeId at ${destinationURI.getHost} (MOVED): Ignoring on attempt $attempts")
           Future(Unit)
@@ -349,7 +352,7 @@ trait CornucopiaGraph {
     def setSlotAssignment(sourceConn: SaladClusterAPI[CodecType, CodecType],
                           destinationConn: SaladClusterAPI[CodecType, CodecType],
                           attempts: Int = 1): Future[Unit] = {
-      val ssa= for {
+      val ssa = for {
         _ <- destinationConn.clusterSetSlotImporting(slot, sourceNodeId)
         _ <- sourceConn.clusterSetSlotMigrating(slot, destinationNodeId)
       } yield { }
