@@ -333,7 +333,8 @@ trait CornucopiaGraph {
           for {
             src <- clusterConnections.get(sourceNodeId)
             dst <- clusterConnections.get(destinationNodeId)
-          } yield migrateSlotKeys(src, dst, attempts + 1)
+            msk <- migrateSlotKeys(src, dst, attempts + 1)
+          } yield msk
         } else if (findError(errorString, "MOVED")) {
           logger.error(s"Failed to migrate slot $slot from $sourceNodeId to $destinationNodeId at ${destinationURI.getHost} (MOVED): Ignoring on attempt $attempts")
           Future(Unit)
