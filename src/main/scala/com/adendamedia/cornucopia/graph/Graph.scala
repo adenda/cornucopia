@@ -288,15 +288,14 @@ trait CornucopiaGraph {
     */
   protected def migrateSlot(slot: Int, sourceNodeId: String, destinationNodeId: String, destinationURI: RedisURI,
                             masters: List[RedisClusterNode],
-                            clusterConnections: util.HashMap[String,Future[SaladClusterAPI[CodecType,CodecType]]],
-                            attempts: Int = 1)
+                            clusterConnections: util.HashMap[String,Future[SaladClusterAPI[CodecType,CodecType]]])
                            (implicit saladAPI: Salad, executionContext: ExecutionContext): Future[Unit] = {
 
     logger.debug(s"Migrate slot for slot $slot from source node $sourceNodeId to target node $destinationNodeId")
 
     // Follows redis-trib.rb
     def migrateSlotKeys(sourceConn: SaladClusterAPI[CodecType, CodecType],
-                        destinationConn: SaladClusterAPI[CodecType, CodecType]): Future[Unit] = {
+                        destinationConn: SaladClusterAPI[CodecType, CodecType], attempts: Int = 1): Future[Unit] = {
 
       import com.adendamedia.salad.serde.ByteArraySerdes._
 
@@ -331,7 +330,7 @@ trait CornucopiaGraph {
           migrateReplace
         } else if (findError(errorString, "CLUSTERDOWN")) {
           logger.error(s"Failed to migrate slot $slot from $sourceNodeId to $destinationNodeId at ${destinationURI.getHost} (CLUSTERDOWN): Retrying for attempt $attempts")
-          migrateSlot(slot, sourceNodeId, destinationNodeId, destinationURI, masters, clusterConnections, attempts + 1)
+          migrateSlotKeys(sourceConn, destinationConn, attempts + 1)
         } else if (findError(errorString, "MOVED")) {
           logger.error(s"Failed to migrate slot $slot from $sourceNodeId to $destinationNodeId at ${destinationURI.getHost} (MOVED): Ignoring on attempt $attempts")
           Future(Unit)
@@ -343,7 +342,7 @@ trait CornucopiaGraph {
 
       migrate map  { _ =>
         logger.info(s"Successfully migrated slot $slot from $sourceNodeId to $destinationNodeId at ${destinationURI.getHost} on attempt $attempts")
-      } recover { case e => handleFailedMigration(e) }
+      } recoverWith { case e => handleFailedMigration(e) }
 
     }
 
@@ -364,12 +363,9 @@ trait CornucopiaGraph {
         logger.warn(s"Ignoring attempt to migrate slot $slot because source and destination node are the same")
         Future(Unit)
       case _ =>
-        val connections = for {
-          sourceConnection <- clusterConnections.get(sourceNodeId)
-          destinationConnection <- clusterConnections.get(destinationNodeId)
-        } yield (sourceConnection, destinationConnection)
         for {
-          (src, dst) <- connections
+          src <- clusterConnections.get(sourceNodeId)
+          dst <- clusterConnections.get(destinationNodeId)
           _ <- setSlotAssignment(src, dst)
           _ <- migrateSlotKeys(src, dst)
           _ <- notifySlotAssignment(slot, destinationNodeId, masters)

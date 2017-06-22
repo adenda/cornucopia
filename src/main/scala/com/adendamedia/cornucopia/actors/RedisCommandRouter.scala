@@ -75,7 +75,7 @@ class Worker extends Actor {
     case Migrate(slot, sourceNodeId, destinationNodeId, fn) =>
       logger.info(s"Worker received migrate message for slot $slot")
       val ref = sender
-      fn(slot, sourceNodeId, destinationNodeId) map { res =>
+      fn(slot, sourceNodeId, destinationNodeId) map { _ =>
         logger.info(s"Finished migrating for slot $slot")
         ref ! slot
       }
