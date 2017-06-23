@@ -607,25 +607,43 @@ class CornucopiaActorSource extends CornucopiaGraph {
 
       printReshardTable(reshardTable)
 
-      // Since migrating many slots causes many requests to redis cluster nodes, we should have a way to throttle
-      // the number of parallel futures executing at any given time so that we don't flood redis nodes with too many
-      // simultaneous requests.
-      import akka.pattern.ask
-      import akka.util.Timeout
-      import scala.concurrent.duration._
-      import RedisCommandRouter._
+      def doReshard: Future[Unit] = {
+        // Since migrating many slots causes many requests to redis cluster nodes, we should have a way to throttle
+        // the number of parallel futures executing at any given time so that we don't flood redis nodes with too many
+        // simultaneous requests.
+        import akka.pattern.ask
+        import akka.util.Timeout
+        import scala.concurrent.duration._
+        import RedisCommandRouter._
 
-      implicit val timeout = Timeout(Config.reshardTimeout seconds)
+        implicit val timeout = Timeout(Config.reshardTimeout seconds)
 
-      val migrateSlotFn = migrateSlot(_: Int, _: String, _: String, newMasterURI, liveMasters, clusterConnections)
+        val migrateSlotFn = migrateSlot(_: Int, _: String, _: String, newMasterURI, liveMasters, clusterConnections)
 
-      val future = redisCommandRouter ? ReshardCluster(targetNode.getNodeId, reshardTable, migrateSlotFn)
+        val future = redisCommandRouter ? ReshardCluster(targetNode.getNodeId, reshardTable, migrateSlotFn)
 
-      future.map{ msg =>
-        logger.info(s"Reshard cluster was a success: $msg")
-        Unit
+        future.mapTo[String].map { msg: String =>
+          logger.info(s"Reshard cluster was a success: $msg")
+          Unit
+        }
       }
 
+      def waitForNewNodeToBeOk(conn: SaladClusterAPI[Connection.CodecType, Connection.CodecType]): Future[Unit] = {
+        def isOk(info: Map[String,String]): Boolean = info("cluster_state") == "ok"
+        conn.clusterInfo flatMap { info: Map[String,String] =>
+          if (isOk(info)) {
+            logger.info(s"New node is ready for resharding")
+            doReshard
+          }
+          else {
+            logger.warn(s"New node is not yet ready for resharding, keep waiting")
+            Thread.sleep(100)
+            waitForNewNodeToBeOk(conn)
+          }
+        }
+      }
+
+      clusterConnections.get(targetNode.getNodeId) flatMap waitForNewNodeToBeOk
     }
   }
 
