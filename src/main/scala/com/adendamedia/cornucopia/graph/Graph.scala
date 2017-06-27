@@ -569,7 +569,7 @@ class CornucopiaActorSource extends CornucopiaGraph {
   private def printReshardTable(reshardTable: Map[String, List[Int]]) = {
     logger.info(s"Reshard Table:")
     reshardTable foreach { case (nodeId, slots) =>
-        logger.info(s"Migrating slots from node '$nodeId': ${slots.mkString(", ")}")
+      logger.info(s"Migrating slots from node '$nodeId': ${slots.mkString(", ")}")
     }
   }
 
