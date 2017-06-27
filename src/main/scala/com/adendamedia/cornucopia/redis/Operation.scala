@@ -35,7 +35,7 @@ object RESHARD extends Operation {
 // Node removal partition operations.
 
 object REMOVE_MASTER extends Operation {
-  val key = RESHARD.key
+  val key = "-master"
   val ordinal = UNSUPPORTED.ordinal + 1
 }
 

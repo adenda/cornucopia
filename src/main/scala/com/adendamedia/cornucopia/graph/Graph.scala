@@ -69,12 +69,19 @@ trait CornucopiaGraph {
   // Add a slave node to the cluster, replicating the master that has the fewest slaves.
   protected def streamAddSlave(implicit executionContext: ExecutionContext): Flow[KeyValue, KeyValue, NotUsed]
 
-  // Emit a key-value pair indicating the node type and URI.
-  protected def streamRemoveNode(implicit executionContext: ExecutionContext) = Flow[KeyValue]
-    .map(_.value)
-    .map(createRedisUri)
-    .map(getNewSaladApi.canonicalizeURI)
-    .mapAsync(1)(emitNodeType)
+  // Emit a KeyValue indicating the node type and URI and sender actor ref
+  protected def streamRemoveNode(implicit executionContext: ExecutionContext): Flow[KeyValue, KeyValue, NotUsed] = Flow[KeyValue]
+    .map(kv => (kv.value, kv.senderRef))
+    .throttle(1, Config.Cornucopia.minReshardWait, 1, ThrottleMode.Shaping)
+    .map(t => (createRedisUri(t._1), t._2) )
+    .map(t => (getNewSaladApi.canonicalizeURI(t._1), t._2))
+    .mapAsync(1)(t => {
+      val redisURI = t._1
+      val actorRef = t._2
+      emitNodeType(redisURI) map { case KeyValue(key, value, _, _) =>
+        KeyValue(key, value, actorRef)
+      }
+    })
 
   // Remove a slave node from the cluster.
   protected def streamRemoveSlave(implicit executionContext: ExecutionContext) = Flow[KeyValue]
@@ -229,7 +236,7 @@ trait CornucopiaGraph {
       if (removalNodeOpt.isEmpty) throw new Exception(s"Node not in cluster: $redisURI")
       val kv = removalNodeOpt.map { node =>
         node.getRole match {
-          case Role.MASTER => KeyValue(RESHARD.key, node.getNodeId)
+          case Role.MASTER => KeyValue(REMOVE_MASTER.key, node.getNodeId)
           case Role.SLAVE  => KeyValue(REMOVE_SLAVE.key, node.getNodeId)
           case _           => KeyValue(UNSUPPORTED.key, node.getNodeId)
         }
@@ -528,6 +535,7 @@ class CornucopiaActorSource extends CornucopiaGraph {
     .mapAsync(1)(_ => logTopology)
     .map(_ => KeyValue("", ""))
 
+  // Reshard the cluster by growing with the new master that was just added
   protected def reshardClusterPrime(sender: Option[ActorRef], newMasterURI: Option[RedisURI], retries: Int = 0): Future[Unit] = {
 
     def reshard(ref: ActorRef, uri: RedisURI): Future[Unit] = {
@@ -647,6 +655,109 @@ class CornucopiaActorSource extends CornucopiaGraph {
     }
   }
 
+  // Remove a master node, but not before redistributing (resharding) it's hash slots and migrating it's data to the
+  // remaining masters
+  protected def streamRemoveMaster(implicit executionContext: ExecutionContext): Flow[KeyValue, KeyValue, NotUsed] = Flow[KeyValue]
+    .map(kv => (kv.value, kv.senderRef)) // kv.value is nodeId
+    .throttle(1, Config.Cornucopia.minReshardWait, 1, ThrottleMode.Shaping)
+    .mapAsync(1)( t => {
+      val nodeId = t._1 // Id of node to remove
+      val senderRef = t._2
+      reshardClusterSecunde(senderRef, Some(nodeId))
+    })
+    .mapAsync(1)(waitForTopologyRefresh[Unit])
+    .mapAsync(1)(_ => logTopology)
+    .map(_ => KeyValue("", ""))
+
+  // Reshard the cluster by shrinking without the old master that was just retired
+  protected def reshardClusterSecunde(sender: Option[ActorRef], retiredMasterNodeId: Option[String], retries: Int = 0): Future[Unit] = {
+
+    def reshard(ref: ActorRef, nodeId: String): Future[Unit] = {
+      reshardClusterWithoutRetiredMaster(nodeId) map { _: Unit =>
+        logger.info(s"Successfully resharded cluster ($retries retries), informing Kubernetes controller, removing retired master")
+        // TODO: remove retired master
+//        ref ! Right(("master", uri.getHost))
+      } recover {
+        case e: ReshardTableException =>
+          logger.error(s"There was a problem computing the reshard table, retrying for retry number ${retries + 1}:", e)
+          reshardClusterSecunde(sender, retiredMasterNodeId, retries + 1)
+        case ex: Throwable =>
+          logger.error("Failed to reshard cluster, informing Kubernetes controller", ex)
+          ref ! Left(s"${ex.toString}")
+      }
+    }
+
+    val result = for {
+      ref <- sender
+      nodeId <- retiredMasterNodeId
+    } yield reshard(ref, nodeId)
+
+    result match {
+      case Some(f) => f
+      case None =>
+        // this should never happen though
+        logger.error("There was a problem resharding the cluster: sender actor or new redis master URI missing")
+        Future(Unit)
+    }
+  }
+
+  protected def reshardClusterWithoutRetiredMaster(retiredMasterNodeId: String): Future[Unit] = {
+    // Execute futures using a thread pool so we don't run out of memory due to futures.
+    implicit val executionContext = Config.actorSystem.dispatchers.lookup("akka.actor.resharding-dispatcher")
+
+    implicit val saladAPI = getNewSaladApi
+
+    saladAPI.masterNodes.flatMap { mn =>
+      val masterNodes = mn.toList
+
+      val liveMasters = masterNodes.filter(_.isConnected)
+
+      lazy val idToURI = new util.HashMap[String,RedisURI](liveMasters.length, 1)
+
+      // Re-use cluster connections so we don't exceed file-handle limit or waste resources.
+      lazy val clusterConnections = new util.HashMap[String,Future[SaladClusterAPI[CodecType,CodecType]]](liveMasters.length, 1)
+
+      val remainingNodes = masterNodes.filter(_.getNodeId != retiredMasterNodeId)
+      val retiredNode = masterNodes.filter(_.getNodeId == retiredMasterNodeId).head
+
+      logger.debug(s"Reshard cluster without retired master node: ${retiredNode.getNodeId}")
+      logger.debug(s"Reshard cluster keeping existing master nodes: ${remainingNodes.map(_.getNodeId)}")
+
+      liveMasters.map { master =>
+        idToURI.put(master.getNodeId, master.getUri)
+        val connection = getConnection(master.getNodeId)
+        clusterConnections.put(master.getNodeId, connection)
+      }
+
+      logger.debug(s"Reshard cluster with new master cluster connections for nodes: ${clusterConnections.keySet().toString}")
+
+      val reshardTable = computeReshardTablePrime(retiredNode, remainingNodes)
+
+      printReshardTable(reshardTable)
+
+      Future(Unit)
+
+      // Since migrating many slots causes many requests to redis cluster nodes, we should have a way to throttle
+      // the number of parallel futures executing at any given time so that we don't flood redis nodes with too many
+      // simultaneous requests.
+//      import akka.pattern.ask
+//      import akka.util.Timeout
+//      import scala.concurrent.duration._
+//      import RedisCommandRouter._
+//
+//      implicit val timeout = Timeout(Config.reshardTimeout seconds)
+//
+//      val migrateSlotFn = migrateSlot(_: Int, _: String, _: String, newMasterURI, liveMasters, clusterConnections)
+//
+//      val future = redisCommandRouter ? ReshardCluster(targetNode.getNodeId, reshardTable, migrateSlotFn)
+//
+//      future.mapTo[String].map { msg: String =>
+//        logger.info(s"Reshard cluster was a success: $msg")
+//        Unit
+//      }
+    }
+  }
+
   protected def extractKeyValue = Flow[ActorRecord]
     .map[KeyValue](record => KeyValue(record.operation, record.redisNodeIp, record.ref))
 
@@ -655,7 +766,7 @@ class CornucopiaActorSource extends CornucopiaGraph {
 
     val taskSource = builder.add(Flow[Task])
 
-    val mergeFeedback = builder.add(MergePreferred[KeyValue](2))
+    val mergeFeedback = builder.add(MergePreferred[KeyValue](1))
 
     val partition = builder.add(Partition[KeyValue](
       5, kv => partitionEvents(kv.key)))
@@ -666,7 +777,7 @@ class CornucopiaActorSource extends CornucopiaGraph {
       3, kv => partitionNodeRemoval(kv.key)
     ))
 
-    val fanIn = builder.add(Merge[KeyValue](5))
+    val fanIn = builder.add(Merge[KeyValue](6))
 
     taskSource.out                          ~> kv
     kv                                      ~> mergeFeedback.preferred
@@ -674,7 +785,7 @@ class CornucopiaActorSource extends CornucopiaGraph {
     partition.out(ADD_MASTER.ordinal)       ~> streamAddMaster      ~> mergeFeedback.in(0)
     partition.out(ADD_SLAVE.ordinal)        ~> streamAddSlave       ~> fanIn
     partition.out(REMOVE_NODE.ordinal)      ~> streamRemoveNode     ~> partitionRm
-    partitionRm.out(REMOVE_MASTER.ordinal)  ~> mergeFeedback.in(1)
+    partitionRm.out(REMOVE_MASTER.ordinal)  ~> streamRemoveMaster   ~> fanIn
     partitionRm.out(REMOVE_SLAVE.ordinal)   ~> streamRemoveSlave    ~> fanIn
     partitionRm.out(UNSUPPORTED.ordinal)    ~> unsupportedOperation ~> fanIn
     partition.out(RESHARD.ordinal)          ~> streamReshard        ~> fanIn
