@@ -676,7 +676,7 @@ class CornucopiaActorSource extends CornucopiaGraph {
     .mapAsync(1)(_ => logTopology)
     .map(_ => KeyValue("", ""))
 
-  // Reshard the cluster by shrinking without the old master that was just retired
+  // Reshard the cluster by shrinking its size, without the old master that was just retired
   protected def reshardClusterSecunde(sender: Option[ActorRef], retiredMasterNodeId: Option[String], retries: Int = 0): Future[Unit] = {
 
     def reshard(ref: ActorRef, nodeId: String): Future[Unit] = {
@@ -743,8 +743,6 @@ class CornucopiaActorSource extends CornucopiaGraph {
 
       printReshardTablePrime(reshardTable)
 
-      Future(Unit)
-
       // Since migrating many slots causes many requests to redis cluster nodes, we should have a way to throttle
       // the number of parallel futures executing at any given time so that we don't flood redis nodes with too many
       // simultaneous requests.
@@ -761,7 +759,10 @@ class CornucopiaActorSource extends CornucopiaGraph {
 
       future.mapTo[String].map { msg: String =>
         logger.info(s"Reshard cluster was a success: $msg")
-        Unit
+        logger.info(s"Forgetting retired master with node Id $retiredMasterNodeId")
+        forgetNodes(List(retiredMasterNodeId)) map { _ =>
+          logger.info(s"Successfully forgot retired master with node Id $retiredMasterNodeId")
+        }
       }
     }
   }

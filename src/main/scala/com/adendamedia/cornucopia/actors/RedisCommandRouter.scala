@@ -107,8 +107,15 @@ class RedisCommandRouter extends Actor {
       val future = migrationRouter.ask(msg).mapTo[Int]
       future
     }
+    val result = Future.fold(migrateResults)(Unit) { (_, slot: Int) =>
+      logger.info(s"Got message from worker finished migrating slot $slot")
+      Unit
+    }
+    result map { _ =>
+      logger.info(s"Finished migrating all slots")
+      ref ! "Done"
+    }
   }
-
 }
 
 class Worker extends Actor {
