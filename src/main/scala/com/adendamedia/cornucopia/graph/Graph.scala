@@ -573,6 +573,13 @@ class CornucopiaActorSource extends CornucopiaGraph {
     }
   }
 
+  private def printReshardTablePrime(reshardTable: Map[String, List[Int]]) = {
+    logger.info(s"Reshard Table:")
+    reshardTable foreach { case (nodeId, slots) =>
+      logger.info(s"Migrating slots to target node '$nodeId': ${slots.mkString(", ")}")
+    }
+  }
+
   protected def reshardClusterWithNewMaster(newMasterURI: RedisURI)
   : Future[Unit] = {
 
@@ -712,8 +719,6 @@ class CornucopiaActorSource extends CornucopiaGraph {
 
       val liveMasters = masterNodes.filter(_.isConnected)
 
-      lazy val idToURI = new util.HashMap[String,RedisURI](liveMasters.length, 1)
-
       // Re-use cluster connections so we don't exceed file-handle limit or waste resources.
       lazy val clusterConnections = new util.HashMap[String,Future[SaladClusterAPI[CodecType,CodecType]]](liveMasters.length, 1)
 
@@ -724,37 +729,40 @@ class CornucopiaActorSource extends CornucopiaGraph {
       logger.debug(s"Reshard cluster keeping existing master nodes: ${remainingNodes.map(_.getNodeId)}")
 
       liveMasters.map { master =>
-        idToURI.put(master.getNodeId, master.getUri)
         val connection = getConnection(master.getNodeId)
         clusterConnections.put(master.getNodeId, connection)
+      }
+
+      val idToURI: Map[String, RedisURI] = liveMasters.foldLeft(Map.empty[String, RedisURI]) { case (tbl, master) =>
+        tbl + (master.getNodeId -> master.getUri)
       }
 
       logger.debug(s"Reshard cluster with new master cluster connections for nodes: ${clusterConnections.keySet().toString}")
 
       val reshardTable = computeReshardTablePrime(retiredNode, remainingNodes)
 
-      printReshardTable(reshardTable)
+      printReshardTablePrime(reshardTable)
 
       Future(Unit)
 
       // Since migrating many slots causes many requests to redis cluster nodes, we should have a way to throttle
       // the number of parallel futures executing at any given time so that we don't flood redis nodes with too many
       // simultaneous requests.
-//      import akka.pattern.ask
-//      import akka.util.Timeout
-//      import scala.concurrent.duration._
-//      import RedisCommandRouter._
-//
-//      implicit val timeout = Timeout(Config.reshardTimeout seconds)
-//
-//      val migrateSlotFn = migrateSlot(_: Int, _: String, _: String, newMasterURI, liveMasters, clusterConnections)
-//
-//      val future = redisCommandRouter ? ReshardCluster(targetNode.getNodeId, reshardTable, migrateSlotFn)
-//
-//      future.mapTo[String].map { msg: String =>
-//        logger.info(s"Reshard cluster was a success: $msg")
-//        Unit
-//      }
+      import akka.pattern.ask
+      import akka.util.Timeout
+      import scala.concurrent.duration._
+      import RedisCommandRouter._
+
+      implicit val timeout = Timeout(Config.reshardTimeout seconds)
+
+      val migrateSlotFn = migrateSlot(_: Int, _: String, _: String, _: RedisURI, liveMasters, clusterConnections)
+
+      val future = redisCommandRouter ? ReshardClusterPrime(retiredMasterNodeId, reshardTable, migrateSlotFn, idToURI)
+
+      future.mapTo[String].map { msg: String =>
+        logger.info(s"Reshard cluster was a success: $msg")
+        Unit
+      }
     }
   }
 
