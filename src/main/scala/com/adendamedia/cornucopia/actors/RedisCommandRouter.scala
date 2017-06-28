@@ -8,7 +8,6 @@ import akka.pattern.ask
 import akka.util.Timeout
 import com.adendamedia.cornucopia.Config
 import com.lambdaworks.redis.RedisURI
-//import com.lambdaworks.redis.cluster.models.partitions.RedisClusterNode
 
 import scala.concurrent.duration._
 import scala.concurrent.Future

@@ -23,12 +23,21 @@ Cornucopia can be run as a stand-alone microservice. The interface to this micro
 For example, assume that the micro service is running on HTTP port 9001 on localhost (which is the default). To add a new master node to the cluster on localhost:7006, run the following command:
 
     curl -X POST \
-      http://localhost:9001/task \
+      http://localhost:9001/task2 \
       -H 'content-type: application/json' \
       -d '{
     	"operation": "+master",
     	"redisNodeIp": "redis://localhost:7006"
     }'
+    
+To remove a slave which is replicating the master with the largest number of slaves:
+
+     curl -X POST \
+       http://localhost:9001/task \
+        -H 'content-type: application/json' \
+        -d '{
+        "operation": "-slave"
+     }'
     
 #### Using Cornucopia as a library in your application
 

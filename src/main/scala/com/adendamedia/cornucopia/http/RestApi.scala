@@ -21,13 +21,28 @@ trait RestRoutes extends CornucopiaApi with EventMarshalling {
   import StatusCodes._
   import CornucopiaTaskMaster._
 
-  def routes: Route = taskRoute
+  def routes: Route = taskRoute ~ taskRoute2
 
   def taskRoute = pathPrefix("task") {
     pathEndOrSingleSlash {
-      post {
+      post { // POST /task
         entity(as[RestTask]) { ed =>
-          onSuccess(submitTask(ed.operation, ed.redisNodeIp)) {
+          onSuccess(submitTask(ed.operation)) {
+            case Left(msg) =>
+              complete(BadRequest, msg)
+            case Right(msg) =>
+              complete(Accepted, msg)
+          }
+        }
+      }
+    }
+  }
+
+  def taskRoute2 = pathPrefix("task2") {
+    pathEndOrSingleSlash {
+      post { // POST /task2
+        entity(as[RestTask2]) { ed =>
+          onSuccess(submitTask2(ed.operation, ed.redisNodeIp)) {
             case Left(msg) =>
               complete(BadRequest, msg)
             case Right(msg) =>
@@ -49,8 +64,12 @@ trait CornucopiaApi {
 
   lazy val cornucopiaTaskMaster = createCornucopiaTaskMaster()
 
-  def submitTask(operation: String, redisNodeIp: String) = {
-    cornucopiaTaskMaster.ask(RestTask(operation, redisNodeIp)).mapTo[Either[String, String]]
+  def submitTask(operation: String) = {
+    cornucopiaTaskMaster.ask(RestTask(operation)).mapTo[Either[String, String]]
+  }
+
+  def submitTask2(operation: String, redisNodeIp: String) = {
+    cornucopiaTaskMaster.ask(RestTask2(operation, redisNodeIp)).mapTo[Either[String, String]]
   }
 }
 

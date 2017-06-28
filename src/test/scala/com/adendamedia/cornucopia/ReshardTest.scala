@@ -78,27 +78,28 @@ class ReshardTest extends TestKit(ActorSystem("ReshardTest"))
     }
   }
 
-  "Debugging" must {
-    "be fun" ignore new ReshardDebug {
-      import Library.source._
-
-      val cornucopiaActorSource = new CornucopiaActorSource
-
-      private val ref = cornucopiaActorSource.ref
-
-      implicit val timeout = Timeout(6 seconds)
-
-      val future = ask(ref, Task("+master", redisUri))
-
-      future.onComplete {
-        case Failure(_) => assert(false)
-        case Success(msg) =>
-          assert(msg == Right("master", redisUri))
-      }
-
-      Await.ready(future, timeout.duration)
-    }
-  }
+//  "Debugging" must {
+//    "be fun" ignore new ReshardDebug {
+//      import Library.source._
+//
+////      val cornucopiaActorSource = new CornucopiaActorSource
+//      val cornucopiaActorSource = SharedTestGraph.graph
+//
+//      private val ref = cornucopiaActorSource.ref
+//
+//      implicit val timeout = Timeout(6 seconds)
+//
+//      val future = ask(ref, Task("+master", Some(redisUri)))
+//
+//      future.onComplete {
+//        case Failure(_) => assert(false)
+//        case Success(msg) =>
+//          assert(msg == Right("master", redisUri))
+//      }
+//
+//      Await.ready(future, timeout.duration)
+//    }
+//  }
 
 }
 

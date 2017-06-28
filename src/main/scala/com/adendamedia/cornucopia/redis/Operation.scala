@@ -32,6 +32,16 @@ object RESHARD extends Operation {
   val ordinal = REMOVE_NODE.ordinal + 1
 }
 
+object CLUSTER_TOPOLOGY extends Operation {
+  val key = "?topology"
+  val ordinal = RESHARD.ordinal + 1
+}
+
+object REMOVE_SLAVE_AUTO extends Operation {
+  val key = REMOVE_SLAVE.key
+  val ordinal = CLUSTER_TOPOLOGY.ordinal + 1
+}
+
 // Node removal partition operations.
 
 object REMOVE_MASTER extends Operation {

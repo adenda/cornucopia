@@ -33,11 +33,13 @@ trait CornucopiaGraph {
   protected def getNewSaladApi: Salad = newSaladAPI
 
   def partitionEvents(key: String) = key.trim.toLowerCase match {
-    case ADD_MASTER.key     => ADD_MASTER.ordinal
-    case ADD_SLAVE.key      => ADD_SLAVE.ordinal
-    case REMOVE_NODE.key    => REMOVE_NODE.ordinal
-    case RESHARD.key        => RESHARD.ordinal
-    case _                  => UNSUPPORTED.ordinal
+    case ADD_MASTER.key        => ADD_MASTER.ordinal
+    case ADD_SLAVE.key         => ADD_SLAVE.ordinal
+    case REMOVE_NODE.key       => REMOVE_NODE.ordinal
+    case REMOVE_SLAVE_AUTO.key => REMOVE_SLAVE_AUTO.ordinal
+    case RESHARD.key           => RESHARD.ordinal
+    case CLUSTER_TOPOLOGY.key  => CLUSTER_TOPOLOGY.ordinal
+    case _                     => UNSUPPORTED.ordinal
   }
 
   def partitionNodeRemoval(key: String) = key.trim.toLowerCase match {
@@ -50,7 +52,7 @@ trait CornucopiaGraph {
     * Stream definitions for the graph.
     */
   // Extract a tuple of the key and value from a Kafka record.
-  case class KeyValue(key: String, value: String, senderRef: Option[ActorRef] = None, newMasterURI: Option[RedisURI] = None)
+  case class KeyValue(key: String, value: Option[String], senderRef: Option[ActorRef] = None, newMasterURI: Option[RedisURI] = None)
 
   // Allows to create Redis URI from the following forms:
   // host OR host:port
@@ -73,7 +75,7 @@ trait CornucopiaGraph {
   protected def streamRemoveNode(implicit executionContext: ExecutionContext): Flow[KeyValue, KeyValue, NotUsed] = Flow[KeyValue]
     .map(kv => (kv.value, kv.senderRef))
     .throttle(1, Config.Cornucopia.minReshardWait, 1, ThrottleMode.Shaping)
-    .map(t => (createRedisUri(t._1), t._2) )
+    .map(t => (createRedisUri(t._1.get), t._2) )
     .map(t => (getNewSaladApi.canonicalizeURI(t._1), t._2))
     .mapAsync(1)(t => {
       val redisURI = t._1
@@ -85,12 +87,20 @@ trait CornucopiaGraph {
 
   // Remove a slave node from the cluster.
   protected def streamRemoveSlave(implicit executionContext: ExecutionContext) = Flow[KeyValue]
-    .map(_.value)
+//    .map(_.value)
+    .map { kv =>
+      kv.value match {
+        case Some(nodeId) =>
+          nodeId
+        case None =>
+          ""
+      }
+    }
     .groupedWithin(100, Config.Cornucopia.batchPeriod)
     .mapAsync(1)(forgetNodes)
     .mapAsync(1)(waitForTopologyRefresh[Unit])
     .mapAsync(1)(_ => logTopology)
-    .map(_ => KeyValue("", ""))
+    .map(_ => KeyValue("", None))
 
   // Throw for keys indicating unsupported operations.
   protected def unsupportedOperation = Flow[KeyValue]
@@ -236,9 +246,9 @@ trait CornucopiaGraph {
       if (removalNodeOpt.isEmpty) throw new Exception(s"Node not in cluster: $redisURI")
       val kv = removalNodeOpt.map { node =>
         node.getRole match {
-          case Role.MASTER => KeyValue(REMOVE_MASTER.key, node.getNodeId)
-          case Role.SLAVE  => KeyValue(REMOVE_SLAVE.key, node.getNodeId)
-          case _           => KeyValue(UNSUPPORTED.key, node.getNodeId)
+          case Role.MASTER => KeyValue(REMOVE_MASTER.key, Some(node.getNodeId))
+          case Role.SLAVE  => KeyValue(REMOVE_SLAVE.key, Some(node.getNodeId))
+          case _           => KeyValue(UNSUPPORTED.key, Some(node.getNodeId))
         }
       }
       kv.get
@@ -450,12 +460,12 @@ class CornucopiaActorSource extends CornucopiaGraph {
 
   val actorSystem = SharedActorSystem.sharedActorSystem
 
-  protected val redisCommandRouter = actorSystem.actorOf(RedisCommandRouter.props, "redisCommandRouter")
+  val redisCommandRouter = actorSystem.actorOf(RedisCommandRouter.props, "redisCommandRouter")
 
   // Add a master node to the cluster.
   override protected def streamAddMaster(implicit executionContext: ExecutionContext): Flow[KeyValue, KeyValue, NotUsed] = Flow[KeyValue]
     .map(kv => (kv.value, kv.senderRef))
-    .map(t => (createRedisUri(t._1), t._2) )
+    .map(t => (createRedisUri(t._1.get), t._2) )
     .map(t => (getNewSaladApi.canonicalizeURI(t._1), t._2))
     .groupedWithin(1, Config.Cornucopia.batchPeriod)
     .mapAsync(1)(t => {
@@ -469,13 +479,18 @@ class CornucopiaActorSource extends CornucopiaGraph {
     .map{ case (redisURIs, actorRef) =>
       val ref = actorRef.head
       val uri = redisURIs.head
-      KeyValue(RESHARD.key, "", ref, Some(uri))
+      KeyValue(RESHARD.key, None, ref, Some(uri))
     }
 
   // Add a slave node to the cluster, replicating the master that has the fewest slaves.
   override protected def streamAddSlave(implicit executionContext: ExecutionContext): Flow[KeyValue, KeyValue, NotUsed] = Flow[KeyValue]
-    .map(kv => (kv.value, kv.senderRef))
-    .map(t => (createRedisUri(t._1), t._2) )
+    .map { kv => kv.value match {
+      case Some(nodeId) => (kv.value, kv.senderRef)
+      case None =>
+        throw new Exception(s"Node Id is required to add a new slave") // TODO: handle exceptions so as not to crash app?
+      }
+    }
+    .map(t => (createRedisUri(t._1.get), t._2) )
     .map(t => (getNewSaladApi.canonicalizeURI(t._1), t._2))
     .groupedWithin(1, Config.Cornucopia.batchPeriod)
     .mapAsync(1)(t => {
@@ -499,7 +514,7 @@ class CornucopiaActorSource extends CornucopiaGraph {
       waitForTopologyRefresh2[Seq[RedisURI], Seq[Option[ActorRef]]](redisURIs, actorRefs)
     })
     .mapAsync(1)(t => signalSlavesAdded(t._1, t._2))
-    .map(_ => KeyValue("", ""))
+    .map(_ => KeyValue("", None))
 
   private def signalSlavesAdded(uris: Seq[RedisURI], senders: Seq[Option[ActorRef]]): Future[Unit] = {
     def signal(uri: RedisURI, ref: Option[ActorRef]): Future[Unit] = {
@@ -533,7 +548,7 @@ class CornucopiaActorSource extends CornucopiaGraph {
     })
     .mapAsync(1)(waitForTopologyRefresh[Unit])
     .mapAsync(1)(_ => logTopology)
-    .map(_ => KeyValue("", ""))
+    .map(_ => KeyValue("", None))
 
   // Reshard the cluster by growing with the new master that was just added
   protected def reshardClusterPrime(sender: Option[ActorRef], newMasterURI: Option[RedisURI], retries: Int = 0): Future[Unit] = {
@@ -670,11 +685,11 @@ class CornucopiaActorSource extends CornucopiaGraph {
     .mapAsync(1)( t => {
       val nodeId = t._1 // Id of node to remove
       val senderRef = t._2
-      reshardClusterSecunde(senderRef, Some(nodeId))
+      reshardClusterSecunde(senderRef, nodeId)
     })
     .mapAsync(1)(waitForTopologyRefresh[Unit])
     .mapAsync(1)(_ => logTopology)
-    .map(_ => KeyValue("", ""))
+    .map(_ => KeyValue("", None))
 
   // Reshard the cluster by shrinking its size, without the old master that was just retired
   protected def reshardClusterSecunde(sender: Option[ActorRef], retiredMasterNodeId: Option[String], retries: Int = 0): Future[Unit] = {
@@ -767,6 +782,19 @@ class CornucopiaActorSource extends CornucopiaGraph {
     }
   }
 
+  protected def streamGetClusterTopology(implicit executionContext: ExecutionContext): Flow[KeyValue, KeyValue, NotUsed] =
+    Flow[KeyValue]
+    .map(kv => kv.senderRef)
+    .throttle(1, Config.Cornucopia.minReshardWait, 1, ThrottleMode.Shaping)
+    .mapAsync(1) { case Some(ref) =>
+      ClusterTopology.getClusterTopology map { topology =>
+        logger.info(s"Got cluster topology: $topology")
+        ref ! topology
+        ref
+      }
+    }
+    .map(_ => KeyValue("", None, Some(ref)))
+
   protected def extractKeyValue = Flow[ActorRecord]
     .map[KeyValue](record => KeyValue(record.operation, record.redisNodeIp, record.ref))
 
@@ -778,7 +806,7 @@ class CornucopiaActorSource extends CornucopiaGraph {
     val mergeFeedback = builder.add(MergePreferred[KeyValue](1))
 
     val partition = builder.add(Partition[KeyValue](
-      5, kv => partitionEvents(kv.key)))
+      7, kv => partitionEvents(kv.key)))
 
     val kv = builder.add(extractKeyValue)
 
@@ -786,19 +814,21 @@ class CornucopiaActorSource extends CornucopiaGraph {
       3, kv => partitionNodeRemoval(kv.key)
     ))
 
-    val fanIn = builder.add(Merge[KeyValue](6))
+    val fanIn = builder.add(Merge[KeyValue](8))
 
-    taskSource.out                          ~> kv
-    kv                                      ~> mergeFeedback.preferred
-    mergeFeedback.out                       ~> partition
-    partition.out(ADD_MASTER.ordinal)       ~> streamAddMaster      ~> mergeFeedback.in(0)
-    partition.out(ADD_SLAVE.ordinal)        ~> streamAddSlave       ~> fanIn
-    partition.out(REMOVE_NODE.ordinal)      ~> streamRemoveNode     ~> partitionRm
-    partitionRm.out(REMOVE_MASTER.ordinal)  ~> streamRemoveMaster   ~> fanIn
-    partitionRm.out(REMOVE_SLAVE.ordinal)   ~> streamRemoveSlave    ~> fanIn
-    partitionRm.out(UNSUPPORTED.ordinal)    ~> unsupportedOperation ~> fanIn
-    partition.out(RESHARD.ordinal)          ~> streamReshard        ~> fanIn
-    partition.out(UNSUPPORTED.ordinal)      ~> unsupportedOperation ~> fanIn
+    taskSource.out                           ~> kv
+    kv                                       ~> mergeFeedback.preferred
+    mergeFeedback.out                        ~> partition
+    partition.out(ADD_MASTER.ordinal)        ~> streamAddMaster           ~> mergeFeedback.in(0)
+    partition.out(ADD_SLAVE.ordinal)         ~> streamAddSlave            ~> fanIn
+    partition.out(REMOVE_SLAVE_AUTO.ordinal) ~> streamRemoveSlave         ~> fanIn
+    partition.out(REMOVE_NODE.ordinal)       ~> streamRemoveNode          ~> partitionRm
+    partitionRm.out(REMOVE_MASTER.ordinal)   ~> streamRemoveMaster        ~> fanIn
+    partitionRm.out(REMOVE_SLAVE.ordinal)    ~> streamRemoveSlave         ~> fanIn
+    partitionRm.out(UNSUPPORTED.ordinal)     ~> unsupportedOperation      ~> fanIn
+    partition.out(RESHARD.ordinal)           ~> streamReshard             ~> fanIn
+    partition.out(CLUSTER_TOPOLOGY.ordinal)  ~> streamGetClusterTopology  ~> fanIn
+    partition.out(UNSUPPORTED.ordinal)       ~> unsupportedOperation      ~> fanIn
 
     FlowShape(taskSource.in, fanIn.out)
   })

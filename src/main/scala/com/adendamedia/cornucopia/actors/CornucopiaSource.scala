@@ -12,7 +12,7 @@ import scala.annotation.tailrec
 object CornucopiaSource {
   def props: Props = Props[CornucopiaSource]
 
-  final case class Task(operation: String, redisNodeIp: String, ref: Option[ActorRef] = None)
+  final case class Task(operation: String, redisNodeIp: Option[String] = None, ref: Option[ActorRef] = None)
   case object TaskAccepted
   case object TaskDenied
 }
