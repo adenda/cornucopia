@@ -722,7 +722,6 @@ class CornucopiaActorSource extends CornucopiaGraph {
     def reshard(ref: ActorRef, uri: String): Future[Unit] = {
       reshardClusterWithoutRetiredMaster(uri) map { _: Unit =>
         logger.info(s"Successfully resharded cluster ($retries retries), informing Kubernetes controller, removing retired master")
-        // TODO: remove retired master
         ref ! Right(("master", uri))
       } recover {
         case e: ReshardTableException =>
@@ -758,12 +757,9 @@ class CornucopiaActorSource extends CornucopiaGraph {
     // By the time this function is called the master node that we are removing should be located on the network node,
     // or instance, with the uri of retiredMasterNodeUriString
     def doReshard(retiredNode: RedisClusterNode): Future[Unit] = {
-      logger.info("Doing reshard now")
-      Future(Unit)
-    }
-    def doReshardNope(retiredNode: RedisClusterNode): Future[Unit] = {
 
-      saladAPI.masterNodes map { mn =>
+      logger.info("Doing reshard now")
+      saladAPI.masterNodes.flatMap { mn =>
 
         val masterNodes = mn.toList
 
@@ -872,8 +868,7 @@ class CornucopiaActorSource extends CornucopiaGraph {
           failover(retiredNode).flatMap(_ => doReshard(retiredNode))
       }
     }
-    val b = res.flatMap(x => x)
-    b
+    res.flatMap(x => x)
   }
 
   protected def streamGetClusterTopology(implicit executionContext: ExecutionContext): Flow[KeyValue, KeyValue, NotUsed] =
