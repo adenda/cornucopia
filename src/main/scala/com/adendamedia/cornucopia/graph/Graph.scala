@@ -830,8 +830,10 @@ class CornucopiaActorSource extends CornucopiaGraph {
         if (res) Future(Unit)
         else {
           logger.info(s"Failover not yet complete, will check again in $failoverRetryPeriod ms.")
-          blocking(Thread.sleep(failoverRetryPeriod))
-          waitForFailover(retiredNode)
+          blocking {
+            Thread.sleep(failoverRetryPeriod)
+            waitForFailover(retiredNode)
+          }
         }
       }
     }
@@ -843,7 +845,6 @@ class CornucopiaActorSource extends CornucopiaGraph {
       saladApiForUri.clusterFailover().flatMap { _ =>
         waitForFailover(retiredNode) map { _ =>
           logger.info(s"Failover complete: network node with URI ${retiredNode.getUri.toURI} is now a Redis master.")
-          doReshard(retiredNode)
         }
       }
     }
@@ -861,16 +862,15 @@ class CornucopiaActorSource extends CornucopiaGraph {
         case List() => slaveNodes.filter(_.getUri == retiredMasterNodeUri).head
       }
 
-      // If the retired node is already a master, then we can go ahead and reshard. If not, then we need to fail-over
-      // on the slave Redis cluster node that occupies this instance with the given URI, before resharding.
-      if (retiredNode.getFlags contains "MASTER") {
-        doReshard(retiredNode)
+      // If the retired node is already a master, then go ahead and reshard. If not, then fail-over
+      // on the slave Redis cluster node that occupies this Network node with the given URI so that the slave becomes a
+      // master. Then reshard can be done by removing the new master node with the given URI.
+      retiredNode.getRole match {
+        case Role.MASTER => doReshard(retiredNode)
+        case Role.SLAVE =>
+          logger.info(s"Network node with URI ${retiredNode.getUri.toURI} to be removed is not a master. Running a manual failover so it becomes a master node before resharding.")
+          failover(retiredNode).flatMap(_ => doReshard(retiredNode))
       }
-      else {
-        logger.info(s"Network node with URI ${retiredNode.getUri.toURI} to be removed is not a master. Running a manual failover so it becomes a master node before resharding.")
-        failover(retiredNode)
-      }
-
     }
     val b = res.flatMap(x => x)
     b
