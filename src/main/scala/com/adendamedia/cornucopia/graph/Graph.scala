@@ -814,33 +814,33 @@ class CornucopiaActorSource extends CornucopiaGraph {
       }
     }
 
-    val failoverRetryPeriod = 500 // TODO: put in config
+    def failover(retiredNodeUri: RedisURI): Future[Unit] = {
+      // redisNode is currently a slave node that must be failed over to become a master
+      val saladApiForUri: Salad = getNewSaladApiForUri(retiredNodeUri)
 
-    def waitForFailover(retiredNode: RedisClusterNode): Future[Unit] = {
-      saladAPI.masterNodes flatMap { mn =>
-        val masters: List[RedisClusterNode] = mn.toList
-        // This doesn't short-circuit but it's probably not a big deal since this still runs in O(n)
-        val res: Boolean = masters.foldLeft(false)((b: Boolean, master: RedisClusterNode) =>
-          b || (master.getUri == retiredNode.getUri)
-        )
-        if (res) Future(Unit)
-        else {
-          logger.info(s"Failover not yet complete, will check again in $failoverRetryPeriod ms.")
-          blocking {
-            Thread.sleep(failoverRetryPeriod)
-            waitForFailover(retiredNode)
+      val failoverRetryPeriod = 500 // TODO: put in config
+
+      def waitForFailover(retiredNodeUri: RedisURI): Future[Unit] = {
+        saladAPI.masterNodes flatMap { mn =>
+          val masters: List[RedisClusterNode] = mn.toList
+          // This doesn't short-circuit but it's probably not a big deal since this still runs in O(n)
+          val res: Boolean = masters.foldLeft(false)((b: Boolean, master: RedisClusterNode) =>
+            b || (master.getUri == retiredNodeUri)
+          )
+          if (res) Future(Unit)
+          else {
+            logger.info(s"Failover not yet complete, will check again in $failoverRetryPeriod ms.")
+            blocking {
+              Thread.sleep(failoverRetryPeriod)
+              waitForFailover(retiredNodeUri)
+            }
           }
         }
       }
-    }
-
-    def failover(retiredNode: RedisClusterNode): Future[Unit] = {
-      // redisNode is currently a slave node that must be failed over to become a master
-      val saladApiForUri: Salad = getNewSaladApiForUri(retiredNode.getUri)
 
       saladApiForUri.clusterFailover().flatMap { _ =>
-        waitForFailover(retiredNode) map { _ =>
-          logger.info(s"Failover complete: network node with URI ${retiredNode.getUri.toURI} is now a Redis master.")
+        waitForFailover(retiredNodeUri) map { _ =>
+          logger.info(s"Failover complete: network node with URI ${retiredNodeUri.toURI} is now a Redis master.")
         }
       }
     }
@@ -865,7 +865,22 @@ class CornucopiaActorSource extends CornucopiaGraph {
         case Role.MASTER => doReshard(retiredNode)
         case Role.SLAVE =>
           logger.info(s"Network node with URI ${retiredNode.getUri.toURI} to be removed is not a master. Running a manual failover so it becomes a master node before resharding.")
-          failover(retiredNode).flatMap(_ => doReshard(retiredNode))
+
+          import akka.pattern.ask
+          import akka.util.Timeout
+          import scala.concurrent.duration._
+          import RedisCommandRouter._
+
+          implicit val timeout = Timeout(Config.reshardTimeout seconds) // TODO: make a config entry for failover timeout
+
+          val failoverFn = failover(_: RedisURI)
+
+          val future = redisCommandRouter ? Failover(failoverFn, retiredNode.getUri)
+
+          future.mapTo[RedisURI].flatMap { uri: RedisURI =>
+            logger.info(s"Failover was a success for the Redis node with URI ${uri.toURI}")
+            doReshard(retiredNode)
+          }
       }
     }
     res.flatMap(x => x)

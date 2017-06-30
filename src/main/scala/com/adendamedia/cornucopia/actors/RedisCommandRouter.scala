@@ -42,6 +42,8 @@ object RedisCommandRouter {
   case class ReshardClusterPrime(sourceNodeId: String, reshardTable: ReshardTableType,
                                  migrateSlotFn: (Int, String, String, RedisURI) => Future[Unit],
                                  idToURI: Map[String, RedisURI])
+
+  case class Failover(failoverFunction: (RedisURI) => Future[Unit], arg: RedisURI)
 }
 
 class RedisCommandRouter extends Actor {
@@ -68,6 +70,9 @@ class RedisCommandRouter extends Actor {
     case Terminated(a) =>
       // TODO: handle termination failure?
       logger.error("Migration router terminated")
+    case failover: Failover =>
+      logger.info(s"Telling worker to failover Redis node with URI ${failover.arg.toURI}")
+      migrationRouter.tell(failover, sender)
   }
 
   def reshardCluster(targetNodeId: String, reshardTable: ReshardTableType, fn: (Int, String, String) => Future[Unit], ref: ActorRef) = {
@@ -137,6 +142,13 @@ class Worker extends Actor {
       fn(slot, sourceNodeId, destinationNodeId, idToURI(sourceNodeId)) map { _ =>
         logger.info(s"Finished migrating for slot $slot")
         ref ! slot
+      }
+    case Failover(fn, redisURI) =>
+      logger.info(s"Worker received failover message to run on Redis node with URI ${redisURI.toURI}")
+      val ref = sender
+      fn(redisURI) map { _ =>
+        logger.info(s"Finished failing over Redis node with URI ${redisURI.toURI}.")
+        ref ! redisURI
       }
   }
 
