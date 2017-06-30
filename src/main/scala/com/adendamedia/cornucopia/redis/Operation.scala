@@ -22,14 +22,9 @@ object ADD_SLAVE extends Operation {
   val ordinal = ADD_MASTER.ordinal + 1
 }
 
-object REMOVE_NODE extends Operation {
-  val key = "-node"
-  val ordinal = ADD_SLAVE.ordinal + 1
-}
-
 object RESHARD extends Operation {
   val key = "*reshard"
-  val ordinal = REMOVE_NODE.ordinal + 1
+  val ordinal = ADD_SLAVE.ordinal + 1
 }
 
 object CLUSTER_TOPOLOGY extends Operation {
@@ -37,16 +32,11 @@ object CLUSTER_TOPOLOGY extends Operation {
   val ordinal = RESHARD.ordinal + 1
 }
 
-object REMOVE_SLAVE_AUTO extends Operation {
-  val key = REMOVE_SLAVE.key
-  val ordinal = CLUSTER_TOPOLOGY.ordinal + 1
-}
-
 // Node removal partition operations.
 
 object REMOVE_MASTER extends Operation {
   val key = "-master"
-  val ordinal = UNSUPPORTED.ordinal + 1
+  val ordinal = CLUSTER_TOPOLOGY.ordinal + 1
 }
 
 object REMOVE_SLAVE extends Operation {
