@@ -845,6 +845,23 @@ class CornucopiaActorSource extends CornucopiaGraph {
       }
     }
 
+    def waitForNewNodeToBeOk(conn: SaladClusterAPI[Connection.CodecType, Connection.CodecType],
+                             retiredNode: RedisClusterNode): Future[Unit] = {
+      def isOk(info: Map[String,String]): Boolean = info("cluster_state") == "ok"
+      conn.clusterInfo flatMap { info: Map[String,String] =>
+        if (isOk(info)) {
+          logger.info(s"New node is ready for resharding")
+          doReshard(retiredNode)
+        }
+        else {
+          logger.warn(s"New node is not yet ready for resharding, keep waiting")
+          Thread.sleep(100)
+          waitForNewNodeToBeOk(conn, retiredNode)
+        }
+      }
+    }
+
+
     val res = for {
       mn <- saladAPI.masterNodes
       sn <- saladAPI.slaveNodes
@@ -879,7 +896,11 @@ class CornucopiaActorSource extends CornucopiaGraph {
 
           future.mapTo[RedisURI].flatMap { uri: RedisURI =>
             logger.info(s"Failover was a success for the Redis node with URI ${uri.toURI}")
-            doReshard(retiredNode)
+            for {
+              conn <- getConnection(retiredNode.getNodeId)
+              _ <- waitForNewNodeToBeOk(conn, retiredNode)
+              res <- doReshard(retiredNode)
+            } yield res
           }
       }
     }
