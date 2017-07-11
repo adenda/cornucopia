@@ -43,4 +43,6 @@ object Config {
   val reshardTimeout: Int = ConfigFactory.load().getConfig("cornucopia").getInt("reshard.timeout")
 
   val migrateSlotTimeout: Int = ConfigFactory.load().getConfig("cornucopia").getInt("reshard.migrate.slot.timeout")
+
+  val dispatchTaskTimeout: Int = 30 // TODO: config
 }

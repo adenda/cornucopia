@@ -62,7 +62,7 @@ class Dispatcher extends Actor with ActorLogging {
       log.error(s"Dispatch task has failed: Timeout after $dispatchTaskTimeout seconds.")
       val ref = dispatchInformation.ref
       ref ! Left((dispatchInformation.task.operation.key, dispatchInformation.task.redisURI, "Timeout"))
-      // TODO: restart actor system?
+      context.system.eventStream.publish(Shutdown)
   }
 
   private def publishTask(operation: Operation, redisURI: RedisURI) = operation match {

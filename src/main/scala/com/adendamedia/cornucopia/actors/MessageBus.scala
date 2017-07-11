@@ -29,4 +29,9 @@ object MessageBus {
     * @param uri The uri of the node that was added
     */
   case class NodeAdded(uri: RedisURI)
+
+  /**
+    * Signals to the actor hierarchy performing redis cluster commands that it should shutdown
+    */
+  case object Shutdown
 }
