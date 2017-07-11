@@ -33,6 +33,8 @@ class Dispatcher extends Actor with ActorLogging {
   import Dispatcher._
   import MessageBus._
 
+  import context.dispatcher
+
   context.system.eventStream.subscribe(self, classOf[NodeAdded])
 
   def receive: Receive = accepting
@@ -59,7 +61,7 @@ class Dispatcher extends Actor with ActorLogging {
       ref ! Right((dispatchInformation.task.operation.key, event.uri)) // TODO: Make this better
       context.become(accepting)
     case CheckTimeout =>
-      log.error(s"Dispatch task has failed: Timeout after $dispatchTaskTimeout seconds.")
+      log.error(s"Dispatch task has failed with timeout after $dispatchTaskTimeout seconds.")
       val ref = dispatchInformation.ref
       ref ! Left((dispatchInformation.task.operation.key, dispatchInformation.task.redisURI, "Timeout"))
       context.system.eventStream.publish(Shutdown)
