@@ -32,6 +32,7 @@ object MessageBus {
 
   /**
     * Signals to the actor hierarchy performing redis cluster commands that it should shutdown
+    * @param message Optional message or reason for shutdown
     */
-  case object Shutdown
+  case class Shutdown(message: Option[String] = None)
 }

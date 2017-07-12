@@ -3,21 +3,13 @@ package com.adendamedia.cornucopia
 import akka.testkit.{TestKit, TestProbe}
 import akka.actor.{ActorSystem, ActorRef}
 import org.scalatest.{BeforeAndAfterAll, MustMatchers, WordSpecLike}
+import com.lambdaworks.redis.RedisURI
 import com.adendamedia.cornucopia.actors.MessageBus._
 import com.adendamedia.cornucopia.actors.Gatekeeper
 import com.adendamedia.cornucopia.actors.Gatekeeper._
-import java.util.Date
-
-import com.lambdaworks.redis.RedisURI
-
-import scala.concurrent.duration._
 
 class GatekeeperTest extends TestKit(ActorSystem("GatekeeperTest"))
   with WordSpecLike with BeforeAndAfterAll with MustMatchers {
-
-//  override def beforeAll(): Unit = {
-//    val gatekeeper: ActorRef = system.actorOf(Gatekeeper.props, "gatekeeper")
-//  }
 
   override def afterAll(): Unit = {
     system.terminate()
@@ -60,6 +52,5 @@ class GatekeeperTest extends TestKit(ActorSystem("GatekeeperTest"))
       doTask.expectMsg(msg)
     }
   }
-
 
 }
