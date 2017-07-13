@@ -1,12 +1,23 @@
 package com.adendamedia.cornucopia.redis
 
-import com.adendamedia.cornucopia.CornucopiaException._
+//import com.adendamedia.cornucopia.CornucopiaException._
 import com.adendamedia.cornucopia.redis.Connection._
 
 import scala.concurrent.{ExecutionContext, Future, blocking}
 import com.lambdaworks.redis.{RedisException, RedisURI}
 
-object ClusterOperations {
+trait ClusterOperations {
+  def addNodeToCluster(redisURI: RedisURI)(implicit executionContext: ExecutionContext): Future[RedisURI]
+}
+
+trait ClusterOperationsExceptions {
+
+  @SerialVersionUID(1L)
+  class CornucopiaRedisConnectionException(msg: String, reason: Throwable = None.orNull)
+    extends Throwable(msg: String, reason: Throwable) with Serializable
+}
+
+object ClusterOperationsImpl extends ClusterOperations with ClusterOperationsExceptions {
 
   /**
     * The entire cluster will meet the new node at the given URI.
@@ -20,7 +31,7 @@ object ClusterOperations {
 
     def getRedisConnection(nodeId: String): Future[Salad] = {
       getConnection(nodeId).recoverWith {
-        case e: RedisException => throw CornucopiaRedisConnectionException(s"Add nodes to cluster failed to get connection to node", e)
+        case e: RedisException => throw new CornucopiaRedisConnectionException(s"Add nodes to cluster failed to get connection to node", e)
       }
     }
 

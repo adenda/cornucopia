@@ -1,5 +1,7 @@
 package com.adendamedia.cornucopia
 
+import com.adendamedia.cornucopia.actors.Overseer._
+
 object CornucopiaException {
   sealed trait CornucopiaException {
     self: Throwable =>
@@ -7,7 +9,12 @@ object CornucopiaException {
     val reason: Throwable
   }
 
+  @SerialVersionUID(1L)
   case class CornucopiaRedisConnectionException(message: String, reason: Throwable = None.orNull)
-    extends Exception(message, reason) with CornucopiaException
+    extends Exception(message, reason) with CornucopiaException with Serializable
+
+  @SerialVersionUID(1L)
+  case class FailedOverseerCommand(overseerCommand: OverseerCommand) extends Exception with Serializable
+
 }
 
