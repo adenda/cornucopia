@@ -31,6 +31,19 @@ object MessageBus {
   case class NodeAdded(uri: RedisURI)
 
   /**
+    * Event indicating that an attempt to add a redis node to the cluster has failed
+    */
+  trait FailedAddingRedisNode {
+    val reason: String
+  }
+
+  /**
+    * Event indicating that an attempt to add a redis node to the cluster has failed
+    * @param reason Sentence explaining the problem
+    */
+  case class FailedAddingMasterRedisNode(reason: String) extends FailedAddingRedisNode
+
+  /**
     * Signals to the actor hierarchy performing redis cluster commands that it should shutdown
     * @param message Optional message or reason for shutdown
     */

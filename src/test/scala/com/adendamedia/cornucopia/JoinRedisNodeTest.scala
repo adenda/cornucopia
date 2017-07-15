@@ -21,8 +21,8 @@ class JoinRedisNodeTest extends TestKit(ActorSystem("JoinRedisNodeTest"))
   }
 
   trait Test {
-    val uriString1: String = "redis://192.168.0.1"
-    val uriString2: String = "redis://192.168.0.1"
+    val uriString1: String = "redis://192.168.0.100"
+    val uriString2: String = "redis://192.168.0.200"
     val redisURI1: RedisURI = RedisURI.create(uriString1)
     val redisURI2: RedisURI = RedisURI.create(uriString2)
     implicit val overseerMaxNrRetries: Int = 1

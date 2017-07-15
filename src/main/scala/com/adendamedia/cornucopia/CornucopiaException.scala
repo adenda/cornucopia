@@ -16,5 +16,8 @@ object CornucopiaException {
   @SerialVersionUID(1L)
   case class FailedOverseerCommand(overseerCommand: OverseerCommand) extends Exception with Serializable
 
+  @SerialVersionUID(1L)
+  case class FailedAddingRedisNodeException(message: String) extends Exception(message: String) with Serializable
+
 }
 

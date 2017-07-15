@@ -1,18 +1,47 @@
 package com.adendamedia.cornucopia.actors
 
-import akka.actor.{Actor, ActorLogging, ActorRef, Props}
+import akka.actor.SupervisorStrategy.Restart
+import akka.actor.{Actor, ActorLogging, ActorRef, Props, OneForOneStrategy, Terminated}
 import akka.pattern.pipe
-import akka.actor.Status.{Success, Failure}
 import com.adendamedia.cornucopia.redis.ClusterOperations
 import com.adendamedia.cornucopia.CornucopiaException._
 import Overseer.OverseerCommand
-
-import scala.concurrent.duration._
-import scala.util.Try
 import com.lambdaworks.redis.RedisURI
 
+object JoinRedisNodeSupervisor {
+  def props(implicit joinRedisNodeMaxNrRetries: Int, clusterOperations: ClusterOperations) =
+    Props(new JoinRedisNodeSupervisor)
+
+  val name = "joinRedisNodeSupervisor"
+}
+
+/**
+  * The master actor for the join redis node action is used to signal a failed attempt to join a node by throwing an
+  * exception.
+  */
+class JoinRedisNodeSupervisor(implicit joinRedisNodeMaxNrRetries: Int,
+                              clusterOperations: ClusterOperations) extends Actor with ActorLogging {
+  import Overseer._
+
+  val joinRedisNodeProps = JoinRedisNode.props
+  val joinRedisNode = context.actorOf(joinRedisNodeProps, JoinRedisNode.name)
+  context.watch(joinRedisNode)
+
+  override def supervisorStrategy = OneForOneStrategy(joinRedisNodeMaxNrRetries) {
+    case _: FailedOverseerCommand => Restart
+  }
+
+  override def receive: Receive = {
+    case join: JoinNode => joinRedisNode forward join
+    case Terminated(_) =>
+      throw FailedAddingRedisNodeException(s"Could not join Redis node to cluster after $joinRedisNodeMaxNrRetries retries")
+  }
+}
+
 object JoinRedisNode {
-  def props(delegateProps: Props): Props = Props(new JoinRedisNode(delegateProps))
+  def props(implicit clusterOperations: ClusterOperations): Props = Props(new JoinRedisNode)
+
+  val name = "joinRedisNode"
 
   case class Passthrough(result: RedisURI)
   case class Fail(message: OverseerCommand)
@@ -22,30 +51,33 @@ object JoinRedisNode {
   case object AddingSlaveNode extends AddingNodeType
 }
 
-class JoinRedisNode(delegateProps: Props) extends Actor with ActorLogging {
+class JoinRedisNode(implicit clusterOperations: ClusterOperations) extends Actor with ActorLogging {
   import Overseer._
   import JoinRedisNode._
 
-  override def preRestart(reason: Throwable,
-                          message: Option[Any]): Unit = {
-    log.info(s"preRestart. Reason: $reason when handling message: $message")
-
+  override def preRestart(reason: Throwable, message: Option[Any]): Unit = {
+    // Retry by sending the same message back to self
     message match {
       case Some(Fail(msg)) => self ! msg
       case _ => ;
     }
-
     super.preRestart(reason, message)
   }
 
-  val delegate = context.system.actorOf(delegateProps)
+  val delegateProps = JoinRedisNodeDelegate.props
+  val delegate = context.actorOf(delegateProps, JoinRedisNodeDelegate.name)
 
   override def receive: Receive = accepting
 
   private def accepting: Receive = {
-    case join: JoinMasterNode =>
-      delegate ! join
-      context.become(delegating(AddingMasterNode, sender))
+    case joinMaster: JoinMasterNode =>
+      val ref = sender
+      delegate ! joinMaster
+      context.become(delegating(AddingMasterNode, ref))
+    case joinSlave: JoinSlaveNode =>
+      val ref = sender
+      delegate ! joinSlave
+      context.become(delegating(AddingSlaveNode, ref))
   }
 
   private def delegating(nodeType: AddingNodeType, ref: ActorRef): Receive = {
@@ -56,10 +88,10 @@ class JoinRedisNode(delegateProps: Props) extends Actor with ActorLogging {
       log.info("passthrough")
       nodeType match {
         case AddingMasterNode =>
-          ref ! MasterNodeAdded(uri)
+          ref ! MasterNodeJoined(uri)
           context.become(accepting)
         case AddingSlaveNode =>
-          ref ! SlaveNodeAdded(uri)
+          ref ! SlaveNodeJoined(uri)
           context.become(accepting)
       }
   }
@@ -68,6 +100,8 @@ class JoinRedisNode(delegateProps: Props) extends Actor with ActorLogging {
 
 object JoinRedisNodeDelegate {
   def props(implicit clusterOperations: ClusterOperations): Props = Props(new JoinRedisNodeDelegate)
+
+  val name = "joinRedisNodeDelegate"
 }
 
 /**

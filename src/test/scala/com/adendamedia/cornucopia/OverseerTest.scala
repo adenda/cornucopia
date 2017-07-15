@@ -1,90 +1,125 @@
 package com.adendamedia.cornucopia
 
-import akka.testkit.{TestActorRef, TestActors, TestKit, TestProbe}
-import akka.actor.{ActorRef, ActorSystem}
-import com.adendamedia.cornucopia.actors.JoinRedisNode
+import akka.testkit.{EventFilter, TestActorRef, TestKit, TestProbe, ImplicitSender}
+import akka.actor.{ActorSystem, ActorRefFactory}
+import com.typesafe.config.ConfigFactory
+import com.adendamedia.cornucopia.actors.JoinRedisNodeSupervisor
 import com.adendamedia.cornucopia.redis.ClusterOperations
 import org.scalatest.{BeforeAndAfterAll, MustMatchers, WordSpecLike}
 import org.mockito.Mockito._
 
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
-import scala.concurrent.duration._
-//import org.scalatest.mockito.MockitoSugar._
 import com.lambdaworks.redis.RedisURI
 import com.adendamedia.cornucopia.actors.MessageBus
 import com.adendamedia.cornucopia.actors.Overseer
-//import com.adendamedia.cornucopia.redis.ClusterOperationsExceptions
 import com.adendamedia.cornucopia.CornucopiaException._
 import org.scalatest.mockito.MockitoSugar
 
-class OverseerTest extends TestKit(ActorSystem("OverseerTest"))
-  with WordSpecLike with BeforeAndAfterAll with MustMatchers with MockitoSugar {
+import OverseerTest._
+
+class OverseerTest extends TestKit(testSystem)
+  with WordSpecLike with BeforeAndAfterAll with MustMatchers with MockitoSugar with ImplicitSender {
+
+  import MessageBus._
+  import Overseer._
 
   override def afterAll(): Unit = {
     system.terminate()
   }
 
   trait Test {
-    val uriString: String = "redis://192.168.0.1"
+    val uriString: String = "redis://192.168.0.100"
     val redisURI: RedisURI = RedisURI.create(uriString)
-    implicit val overseerMaxNrRetries: Int = 1
+    implicit val joinRedisNodeMaxNrRetries: Int = 2
+    val cornucopiaRedisConnectionExceptionMessage = "wat"
+
+    implicit val ec: ExecutionContext = system.dispatcher
+    implicit val clusterOperations: ClusterOperations = mock[ClusterOperations]
+    val addNodeMessage: AddNode = AddMaster(redisURI)
   }
 
-//  trait ExceptionalTest {
-//    implicit val clusterOperations: ClusterOperations = mock[ClusterOperations]
-//
-//    implicit val ec: ExecutionContext = system.dispatcher
-//
-//    when(clusterOperations.addNodeToCluster(redisURI)).thenThrow(CornucopiaRedisConnectionException("wat"))
-//  }
+  trait FailureTest extends Test {
+    when(clusterOperations.addNodeToCluster(redisURI))
+      .thenReturn(
+        Future.failed(CornucopiaRedisConnectionException(cornucopiaRedisConnectionExceptionMessage))
+      )
+
+    val joinRedisNodeSupervisorMaker =
+      (f: ActorRefFactory) => f.actorOf(JoinRedisNodeSupervisor.props, "joinRedisNodeSupervisor1")
+
+    val overseerProps = Overseer.props(joinRedisNodeSupervisorMaker)
+    val overseer = TestActorRef[Overseer](overseerProps)
+  }
+
+  trait SuccessTest extends Test {
+    when(clusterOperations.addNodeToCluster(redisURI)).thenReturn(Future.successful(redisURI))
+
+//    val joinRedisNodeSupervisorMaker =
+//      (f: ActorRefFactory) => f.actorOf(JoinRedisNodeSupervisor.props, "joinRedisNodeSupervisor3")
+
+    val joinRedisNodeSupervisor = TestActorRef[JoinRedisNodeSupervisor](JoinRedisNodeSupervisor.props)
+
+//    val overseerProps = Overseer.props(joinRedisNodeSupervisorMaker)
+//    val overseer = TestActorRef[Overseer](overseerProps)
+  }
 
   "Overseer" must {
-    "retry joining node to cluster if there is a CornucopiaRedisConnectionException in the JoinRedisNode actor" in new Test {
-//      import Overseer._
-//      import MessageBus._
-//
-//      val probe = TestProbe()
-//
-//      implicit val clusterOperations: ClusterOperations = mock[ClusterOperations]
-//
-//      implicit val ec: ExecutionContext = system.dispatcher
-//
-//      when(clusterOperations.addNodeToCluster(redisURI)).thenReturn(Future.failed(CornucopiaRedisConnectionException("wat")))
-//
-//      val joinRedisNodeProps = JoinRedisNode.props
-//
-//      val props = Overseer.props(JoinRedisNode.props)
-//      val overseer = TestActorRef[Overseer](props)
-//      val overseer = system.actorOf(props, "overseerTest2")
+    "retry joining node to cluster" in new FailureTest {
+      val expectedErrorMessage =
+        s"Failed to join node ${redisURI.toURI} with error: $cornucopiaRedisConnectionExceptionMessage"
 
-//      val testActor = TestActorRef[Overseer](props)
-//
-//      val testChildActor = TestActorRef[JoinRedisNode](testActor.underlyingActor.joinRedisNode)
-
-
-//      Thread.sleep(1)
-
-//      val msg: AddNode = AddMaster(redisURI)
-//      system.eventStream.publish(msg)
-
-//      testChildActor.underlyingActor.
-
-//      Thread.sleep(5000)
-
-      1 must be(1)
+      EventFilter.error(message = expectedErrorMessage,
+        occurrences = joinRedisNodeMaxNrRetries + 1) intercept {
+          system.eventStream.publish(addNodeMessage)
+        }
     }
 
-    "receive add master node task from message bus and tell JoinRedisNode actor with JoinMasterNode command" in new Test {
+    "fail to join node to cluster after maximum number of retries is reached" in new FailureTest {
+      val expectedErrorMessage =
+        s"Could not join Redis node to cluster after $joinRedisNodeMaxNrRetries retries: Restarting child actor"
+
+      EventFilter.error(message = expectedErrorMessage,
+        occurrences = 1) intercept {
+        system.eventStream.publish(addNodeMessage)
+      }
+    }
+
+    "publish to event bus when it fails to add a node to the cluster" in new FailureTest {
+      val probe = TestProbe()
+
+      system.eventStream.subscribe(probe.ref, classOf[FailedAddingMasterRedisNode])
+
+      system.eventStream.publish(addNodeMessage)
+
+      val msg = FailedAddingMasterRedisNode(
+        s"Could not join Redis node to cluster after $joinRedisNodeMaxNrRetries retries"
+      )
+
+      probe.expectMsg(msg)
+    }
+
+    "succeed joining master node to cluster" in new SuccessTest {
+      joinRedisNodeSupervisor ! JoinMasterNode(redisURI)
+
+      expectMsg(MasterNodeJoined(redisURI))
+    }
+
+    "succeed joining slave node to cluster" in new SuccessTest {
+      joinRedisNodeSupervisor ! JoinSlaveNode(redisURI)
+
+      expectMsg(SlaveNodeJoined(redisURI))
+    }
+
+    "receive add master node task from message bus and tell JoinRedisNodeSupervisor actor with JoinMasterNode command" in new Test {
       import Overseer._
       import MessageBus._
 
       val probe = TestProbe()
 
-      val joinRedisNodeProps = TestActors.forwardActorProps(probe.ref)
-
-      val props = Overseer.props(joinRedisNodeProps)
-      val overseer = TestActorRef[Overseer](props)
+      val joinRedisNodeSupervisorMaker = (f: ActorRefFactory) => probe.ref
+      val overseerProps = Overseer.props(joinRedisNodeSupervisorMaker)
+      val overseer = TestActorRef[Overseer](overseerProps)
 
       val msg: AddNode = AddMaster(redisURI)
       system.eventStream.publish(msg)
@@ -97,4 +132,14 @@ class OverseerTest extends TestKit(ActorSystem("OverseerTest"))
 
   }
 
+}
+
+object OverseerTest {
+  val testSystem = {
+    val config = ConfigFactory.parseString(
+      """
+         akka.loggers = [akka.testkit.TestEventListener]
+      """)
+    ActorSystem("OverseerTest", config)
+  }
 }
