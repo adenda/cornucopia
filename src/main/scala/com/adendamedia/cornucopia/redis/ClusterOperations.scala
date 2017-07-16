@@ -1,13 +1,19 @@
 package com.adendamedia.cornucopia.redis
 
 //import com.adendamedia.cornucopia.CornucopiaException._
+import org.slf4j.LoggerFactory
 import com.adendamedia.cornucopia.redis.Connection._
+import com.lambdaworks.redis.cluster.models.partitions.RedisClusterNode
+import com.adendamedia.salad.SaladClusterAPI
 
 import scala.concurrent.{ExecutionContext, Future, blocking}
 import com.lambdaworks.redis.{RedisException, RedisURI}
 
 trait ClusterOperations {
   def addNodeToCluster(redisURI: RedisURI)(implicit executionContext: ExecutionContext): Future[RedisURI]
+
+  def getRedisSourceNodes(targetRedisURI: RedisURI)
+                         (implicit executionContext: ExecutionContext): Future[List[RedisClusterNode]]
 }
 
 trait ClusterOperationsExceptions {
@@ -18,6 +24,8 @@ trait ClusterOperationsExceptions {
 }
 
 object ClusterOperationsImpl extends ClusterOperations with ClusterOperationsExceptions {
+
+  private val logger = LoggerFactory.getLogger(this.getClass)
 
   /**
     * The entire cluster will meet the new node at the given URI.
@@ -48,6 +56,37 @@ object ClusterOperationsImpl extends ClusterOperations with ClusterOperationsExc
       }
     }
 
+  }
+
+  /**
+    * Retrieves the source Redis nodes, which are the nodes that will give up keys to the new target master node
+    * @param targetRedisURI The URI of the new master being added that will receive new key slots
+    * @param executionContext Execution context
+    * @return Future of a list of source nodes
+    */
+  def getRedisSourceNodes(targetRedisURI: RedisURI)
+                         (implicit executionContext: ExecutionContext): Future[List[RedisClusterNode]] = {
+    val saladAPI = newSaladAPI
+
+    saladAPI.masterNodes.map { masters =>
+      val masterNodes = masters.toList
+
+      logger.debug(s"Reshard table with new master nodes: ${masterNodes.map(_.getNodeId)}")
+
+      val liveMasters = masterNodes.filter(_.isConnected)
+
+      logger.debug(s"Reshard cluster with new master live masters: ${liveMasters.map(_.getNodeId)}")
+
+      val targetNode = masterNodes.filter(_.getUri == targetRedisURI).head
+
+      logger.debug(s"Reshard cluster with new master target node: ${targetNode.getNodeId}")
+
+      val sourceNodes = masterNodes.filterNot(_ == targetNode)
+
+      logger.debug(s"Reshard cluster with new master source nodes: ${sourceNodes.map(_.getNodeId)}")
+
+      sourceNodes
+    }
   }
 
 }

@@ -1,6 +1,6 @@
 package com.adendamedia.cornucopia
 
-import akka.testkit.{EventFilter, TestActorRef, TestKit, TestProbe, ImplicitSender}
+import akka.testkit.{EventFilter, TestActorRef, TestKit, TestProbe, ImplicitSender, TestActors}
 import akka.actor.{ActorSystem, ActorRefFactory}
 import com.typesafe.config.ConfigFactory
 import com.adendamedia.cornucopia.actors.JoinRedisNodeSupervisor
@@ -48,7 +48,10 @@ class OverseerTest extends TestKit(testSystem)
     val joinRedisNodeSupervisorMaker =
       (f: ActorRefFactory) => f.actorOf(JoinRedisNodeSupervisor.props, "joinRedisNodeSupervisor1")
 
-    val overseerProps = Overseer.props(joinRedisNodeSupervisorMaker)
+    val reshardClusterSupervisorMaker =
+      (f: ActorRefFactory) => f.actorOf(TestActors.blackholeProps)
+
+    val overseerProps = Overseer.props(joinRedisNodeSupervisorMaker, reshardClusterSupervisorMaker)
     val overseer = TestActorRef[Overseer](overseerProps)
   }
 
@@ -65,7 +68,7 @@ class OverseerTest extends TestKit(testSystem)
   }
 
   "Overseer" must {
-    "retry joining node to cluster" in new FailureTest {
+    "retry joining node to cluster if it fails" in new FailureTest {
       val expectedErrorMessage =
         s"Failed to join node ${redisURI.toURI} with error: $cornucopiaRedisConnectionExceptionMessage"
 
@@ -118,7 +121,8 @@ class OverseerTest extends TestKit(testSystem)
       val probe = TestProbe()
 
       val joinRedisNodeSupervisorMaker = (f: ActorRefFactory) => probe.ref
-      val overseerProps = Overseer.props(joinRedisNodeSupervisorMaker)
+      val reshardClusterSupervisorMaker = (f: ActorRefFactory) => f.actorOf(TestActors.blackholeProps)
+      val overseerProps = Overseer.props(joinRedisNodeSupervisorMaker, reshardClusterSupervisorMaker)
       val overseer = TestActorRef[Overseer](overseerProps)
 
       val msg: AddNode = AddMaster(redisURI)
@@ -128,6 +132,22 @@ class OverseerTest extends TestKit(testSystem)
         case JoinMasterNode(uri: RedisURI) =>
           uri must be(redisURI)
       }
+    }
+
+    "tell reshard cluster supervisor to reshard with new master after master node is joined to cluster" in new Test {
+      import Overseer._
+
+      val probe = TestProbe()
+
+      val joinRedisNodeSupervisorMaker = (f: ActorRefFactory) => f.actorOf(TestActors.blackholeProps)
+      val reshardClusterSupervisorMaker = (f: ActorRefFactory) => probe.ref
+      val overseerProps = Overseer.props(joinRedisNodeSupervisorMaker, reshardClusterSupervisorMaker)
+      val overseer = TestActorRef[Overseer](overseerProps)
+
+      overseer ! AddMaster(redisURI)
+      overseer ! MasterNodeJoined(redisURI)
+
+      probe.expectMsg(ReshardWithNewMaster(redisURI))
     }
 
   }

@@ -30,6 +30,7 @@ class JoinRedisNodeTest extends TestKit(ActorSystem("JoinRedisNodeTest"))
 
   "JoinRedisNodeDelegate" must {
     "receive a Fail response from JoinRedisNodeDelegate when the connection to the Redis cluster fails" in new Test {
+
       import Overseer._
       import JoinRedisNode._
 
@@ -52,7 +53,9 @@ class JoinRedisNodeTest extends TestKit(ActorSystem("JoinRedisNodeTest"))
         Fail(JoinSlaveNode(redisURI2))
       )
     }
+  }
 
+  "JoinRedisNode" must {
     "receive a Passthrough response form JoinRedisNodeDelegate when the node is successfully added to the cluster" in new Test {
       import Overseer._
       import JoinRedisNode._

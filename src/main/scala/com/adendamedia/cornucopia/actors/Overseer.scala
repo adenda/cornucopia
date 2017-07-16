@@ -4,11 +4,16 @@ import akka.actor.SupervisorStrategy.Restart
 import akka.actor.{Actor, ActorLogging, ActorRef, ActorRefFactory, OneForOneStrategy, Props, Terminated}
 import com.adendamedia.cornucopia.CornucopiaException._
 import com.adendamedia.cornucopia.redis.ClusterOperations
+import com.adendamedia.cornucopia.Config
 import com.lambdaworks.redis.RedisURI
 
+import scala.concurrent.duration._
+
 object Overseer {
-  def props(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef)
-           (implicit clusterOperations: ClusterOperations): Props = Props(new Overseer(joinRedisNodeSupervisorMaker))
+  def props(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
+            reshardClusterSupervisorMaker: ActorRefFactory => ActorRef)
+           (implicit clusterOperations: ClusterOperations): Props =
+    Props(new Overseer(joinRedisNodeSupervisorMaker, reshardClusterSupervisorMaker))
 
   trait OverseerCommand
 
@@ -31,6 +36,9 @@ object Overseer {
   }
   case class MasterNodeJoined(uri: RedisURI) extends NodeJoinedEvent
   case class SlaveNodeJoined(uri: RedisURI) extends NodeJoinedEvent
+
+  trait Reshard
+  case class ReshardWithNewMaster(uri: RedisURI) extends Reshard
 }
 
 /**
@@ -38,12 +46,16 @@ object Overseer {
   * actor of all actors that process Redis cluster commands. Cluster commands include adding and removing nodes. The
   * overseer subscribes to the Shutdown message, whereby after receiving this message, it will restart its children.
   */
-class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef)
+class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
+               reshardClusterSupervisorMaker: ActorRefFactory => ActorRef)
               (implicit clusterOperations: ClusterOperations) extends Actor with ActorLogging {
   import MessageBus.{AddNode, AddMaster, AddSlave, Shutdown, FailedAddingMasterRedisNode}
   import Overseer._
 
+  import context.dispatcher
+
   val joinRedisNodeSupervisor: ActorRef = joinRedisNodeSupervisorMaker(context)
+  val reshardClusterSupervisor: ActorRef = reshardClusterSupervisorMaker(context)
 
   context.system.eventStream.subscribe(self, classOf[AddNode])
   context.system.eventStream.subscribe(self, classOf[Shutdown])
@@ -77,10 +89,17 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef)
   private def joiningNode(uri: RedisURI): Receive = {
     case masterNodeJoined: MasterNodeJoined =>
       log.info(s"Master Redis node ${masterNodeJoined.uri} successfully joined")
-      // TODO: reshard
+      reshardClusterSupervisor ! ReshardWithNewMaster(uri)
+      context.become(resharding(uri))
     case slaveNodeJoined: SlaveNodeJoined =>
       log.info(s"Slave Redis node ${slaveNodeJoined.uri} successfully joined")
       // TODO: replicate poorest master
+  }
+
+  private def resharding(uri: RedisURI): Receive = {
+    case reshard: ReshardWithNewMaster =>
+      log.info(s"ReshardWithNewMaster $uri")
+
   }
 
 }
