@@ -15,6 +15,8 @@ object ClusterOperations {
   case class CornucopiaRedisConnectionException(message: String, reason: Throwable = None.orNull)
     extends Throwable(message, reason) with Serializable
 
+  type NodeId = String
+  type ClusterConnectionsType = Map[NodeId, Connection.Salad]
 }
 
 trait ClusterOperations {
@@ -91,6 +93,51 @@ object ClusterOperationsImpl extends ClusterOperations {
       logger.debug(s"Reshard cluster with new master source nodes: ${sourceNodes.map(_.getNodeId)}")
 
       sourceNodes
+    }
+  }
+
+  /**
+    * Retrieves the connections to the Redis cluster nodes
+    * @param executionContext Execution context
+    * @return Future of the cluster connections to master nodes
+    */
+  def getClusterConnections(implicit executionContext: ExecutionContext): Future[ClusterConnectionsType] = {
+
+    implicit val saladAPI = newSaladAPI
+
+    val liveMasters: Future[List[RedisClusterNode]] = saladAPI.masterNodes.map { masters =>
+      masters.toList.filter(_.isConnected)
+    }
+
+    val connections: Future[List[(RedisClusterNode, Future[Connection.Salad])]] = for {
+      masters <- liveMasters
+    } yield {
+      for {
+        master <- masters
+      } yield (master, getConnection(master.getNodeId))
+    }
+
+    val result: Future[List[(NodeId, Connection.Salad)]] = connections.flatMap { conns =>
+      conns.unzip match {
+        case (masters, futureConnections) =>
+          val zero = List.empty[Connection.Salad]
+          // foldLeft
+          Future.fold(futureConnections)(zero) { (cs1, conn) =>
+            cs1 ++ List(conn)
+          } map { cs: List[Connection.Salad] =>
+            masters.map(_.getNodeId).zip(cs)
+          }
+      }
+    }
+
+    val zero = Map.empty[NodeId, Connection.Salad]
+    result.map { cs =>
+      cs.foldLeft(zero) { (map, tuple) =>
+        tuple match {
+          case (nodeId: NodeId, conn: Connection.Salad) =>
+            map + (nodeId -> conn)
+        }
+      }
     }
   }
 
