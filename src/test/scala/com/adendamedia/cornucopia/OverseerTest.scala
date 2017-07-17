@@ -40,6 +40,8 @@ class OverseerTest extends TestKit(testSystem)
   }
 
   trait FailureTest extends Test {
+    import ClusterOperations._
+
     when(clusterOperations.addNodeToCluster(redisURI))
       .thenReturn(
         Future.failed(CornucopiaRedisConnectionException(cornucopiaRedisConnectionExceptionMessage))

@@ -6,7 +6,6 @@ import org.scalatest.{BeforeAndAfterAll, MustMatchers, WordSpecLike}
 import com.lambdaworks.redis.RedisURI
 import com.adendamedia.cornucopia.actors.{JoinRedisNode, JoinRedisNodeDelegate, MessageBus, Overseer}
 import com.adendamedia.cornucopia.redis.ClusterOperations
-import com.adendamedia.cornucopia.CornucopiaException._
 
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
@@ -33,6 +32,7 @@ class JoinRedisNodeTest extends TestKit(ActorSystem("JoinRedisNodeTest"))
 
       import Overseer._
       import JoinRedisNode._
+      import ClusterOperations._
 
       implicit val clusterOperations: ClusterOperations = mock[ClusterOperations]
 

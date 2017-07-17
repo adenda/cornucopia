@@ -5,12 +5,22 @@ import com.lambdaworks.redis.cluster.models.partitions.RedisClusterNode
 
 import scala.annotation.tailrec
 
-trait ReshardTableNew {
+object ReshardTableNew {
+
   type NodeId = String
   type Slot = Int
   type ReshardTableType = scala.collection.immutable.Map[NodeId, List[Slot]]
 
   case class LogicalNode(node: RedisClusterNode, slots: List[Int])
+
+  @SerialVersionUID(1L)
+  case class ReshardTableException(private val message: String = "", private val cause: Throwable = None.orNull)
+    extends RuntimeException(message, cause) with Serializable
+
+}
+
+trait ReshardTableNew {
+  import ReshardTableNew._
 
   /**
     * Used when adding a new master
@@ -32,12 +42,9 @@ trait ReshardTableNew {
                               (implicit ExpectedTotalNumberSlots: Int): ReshardTableType
 }
 
-trait ReshardTableNewExceptions {
-  case class ReshardTableException(private val message: String = "", private val cause: Throwable = None.orNull)
-    extends Exception(message, cause)
-}
+object ReshardTableNewImpl extends ReshardTableNew {
+  import ReshardTableNew._
 
-object ReshardTableNewImpl extends ReshardTableNew with ReshardTableNewExceptions {
   private val logger = LoggerFactory.getLogger(this.getClass)
 
   def computeReshardTable(sourceNodes: List[RedisClusterNode])

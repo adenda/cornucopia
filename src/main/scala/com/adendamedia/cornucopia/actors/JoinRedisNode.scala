@@ -16,7 +16,7 @@ object JoinRedisNodeSupervisor {
 }
 
 /**
-  * The master actor for the join redis node action is used to signal a failed attempt to join a node by throwing an
+  * The supervisor actor for the join redis node action is used to signal a failed attempt to join a node by throwing an
   * exception.
   */
 class JoinRedisNodeSupervisor(implicit joinRedisNodeMaxNrRetries: Int,
@@ -113,6 +113,7 @@ object JoinRedisNodeDelegate {
 class JoinRedisNodeDelegate(implicit clusterOperations: ClusterOperations) extends Actor with ActorLogging {
   import Overseer._
   import JoinRedisNode._
+  import ClusterOperations._
   import context.dispatcher
 
   override def receive: Receive = {

@@ -9,21 +9,26 @@ import com.adendamedia.salad.SaladClusterAPI
 import scala.concurrent.{ExecutionContext, Future, blocking}
 import com.lambdaworks.redis.{RedisException, RedisURI}
 
+object ClusterOperations {
+
+  @SerialVersionUID(1L)
+  case class CornucopiaRedisConnectionException(message: String, reason: Throwable = None.orNull)
+    extends Throwable(message, reason) with Serializable
+
+}
+
 trait ClusterOperations {
+
   def addNodeToCluster(redisURI: RedisURI)(implicit executionContext: ExecutionContext): Future[RedisURI]
 
   def getRedisSourceNodes(targetRedisURI: RedisURI)
                          (implicit executionContext: ExecutionContext): Future[List[RedisClusterNode]]
+
 }
 
-trait ClusterOperationsExceptions {
+object ClusterOperationsImpl extends ClusterOperations {
 
-  @SerialVersionUID(1L)
-  class CornucopiaRedisConnectionException(msg: String, reason: Throwable = None.orNull)
-    extends Throwable(msg: String, reason: Throwable) with Serializable
-}
-
-object ClusterOperationsImpl extends ClusterOperations with ClusterOperationsExceptions {
+  import ClusterOperations._
 
   private val logger = LoggerFactory.getLogger(this.getClass)
 
@@ -39,7 +44,7 @@ object ClusterOperationsImpl extends ClusterOperations with ClusterOperationsExc
 
     def getRedisConnection(nodeId: String): Future[Salad] = {
       getConnection(nodeId).recoverWith {
-        case e: RedisException => throw new CornucopiaRedisConnectionException(s"Add nodes to cluster failed to get connection to node", e)
+        case e: RedisException => throw CornucopiaRedisConnectionException(s"Add nodes to cluster failed to get connection to node", e)
       }
     }
 
