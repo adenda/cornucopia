@@ -10,6 +10,15 @@ object ConfigNew {
     val executionContext: ExecutionContext
   }
 
+  trait ClusterConnectionsConfig {
+    /**
+      * The maximum number of retries to try and get cluster connections
+      */
+    val maxNrRetries: Int
+
+    val executionContext: ExecutionContext
+  }
+
 
 //  object ReshardClusterConfigImpl extends ReshardClusterConfig {
 //    val maxNrRetries: Int = -1 // TODO (note: -1 means infinite retries)

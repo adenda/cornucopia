@@ -20,12 +20,14 @@ object ClusterOperations {
 }
 
 trait ClusterOperations {
+  import ClusterOperations._
 
   def addNodeToCluster(redisURI: RedisURI)(implicit executionContext: ExecutionContext): Future[RedisURI]
 
   def getRedisSourceNodes(targetRedisURI: RedisURI)
                          (implicit executionContext: ExecutionContext): Future[List[RedisClusterNode]]
 
+  def getClusterConnections(implicit executionContext: ExecutionContext): Future[ClusterConnectionsType]
 }
 
 object ClusterOperationsImpl extends ClusterOperations {

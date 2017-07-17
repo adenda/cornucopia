@@ -39,6 +39,9 @@ object Overseer {
 
   trait Reshard
   case class ReshardWithNewMaster(uri: RedisURI) extends Reshard
+
+  case object GetClusterConnections extends OverseerCommand
+  case class GotClusterConnections(connections: ClusterOperations.ClusterConnectionsType)
 }
 
 /**
