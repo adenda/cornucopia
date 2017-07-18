@@ -28,6 +28,15 @@ trait ClusterOperations {
                          (implicit executionContext: ExecutionContext): Future[List[RedisClusterNode]]
 
   def getClusterConnections(implicit executionContext: ExecutionContext): Future[ClusterConnectionsType]
+
+  /**
+    * Checks if the cluster status of all Redis node connections is "OK"
+    * @param clusterConnections The connections to cluster nodes (masters)
+    * @param executionContext The Execution context
+    * @return Future Boolean, true if all nodes are OK, false otherwise
+    */
+  def isClusterReady(clusterConnections: ClusterConnectionsType)
+                    (implicit executionContext: ExecutionContext): Future[Boolean]
 }
 
 object ClusterOperationsImpl extends ClusterOperations {
@@ -141,6 +150,11 @@ object ClusterOperationsImpl extends ClusterOperations {
         }
       }
     }
+  }
+
+  def isClusterReady(clusterConnections: ClusterConnectionsType)
+                    (implicit executionContext: ExecutionContext): Future[Boolean] = {
+    Future(true) // TODO
   }
 
 }

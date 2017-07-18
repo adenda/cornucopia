@@ -51,7 +51,7 @@ object ClusterConnections {
 
   val name = "clusterConnections"
 
-  case object KillMyself
+  case object Kill
 }
 
 class ClusterConnections(implicit config: ClusterConnectionsConfig, clusterOperations: ClusterOperations)
@@ -62,7 +62,7 @@ class ClusterConnections(implicit config: ClusterConnectionsConfig, clusterOpera
 
   override def receive: Receive = {
     case GetClusterConnections => getConnections(sender)
-    case KillMyself => throw FailedOverseerCommand(GetClusterConnections)
+    case Kill => throw FailedOverseerCommand(GetClusterConnections)
   }
 
   private def getConnections(ref: ActorRef) = {
@@ -70,7 +70,7 @@ class ClusterConnections(implicit config: ClusterConnectionsConfig, clusterOpera
     clusterOperations.getClusterConnections map { connections =>
       GotClusterConnections(connections)
     } recover {
-      case e => self ! KillMyself
+      case e => self ! Kill
     } pipeTo ref
   }
 

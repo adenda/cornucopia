@@ -53,7 +53,10 @@ class OverseerTest extends TestKit(testSystem)
     val reshardClusterSupervisorMaker =
       (f: ActorRefFactory) => f.actorOf(TestActors.blackholeProps)
 
-    val overseerProps = Overseer.props(joinRedisNodeSupervisorMaker, reshardClusterSupervisorMaker)
+    val dummy1 = (f: ActorRefFactory) => f.actorOf(TestActors.blackholeProps)
+    val dummy2 = (f: ActorRefFactory) => f.actorOf(TestActors.blackholeProps)
+
+    val overseerProps = Overseer.props(joinRedisNodeSupervisorMaker, reshardClusterSupervisorMaker, dummy1, dummy2)
     val overseer = TestActorRef[Overseer](overseerProps)
   }
 
@@ -124,7 +127,11 @@ class OverseerTest extends TestKit(testSystem)
 
       val joinRedisNodeSupervisorMaker = (f: ActorRefFactory) => probe.ref
       val reshardClusterSupervisorMaker = (f: ActorRefFactory) => f.actorOf(TestActors.blackholeProps)
-      val overseerProps = Overseer.props(joinRedisNodeSupervisorMaker, reshardClusterSupervisorMaker)
+
+      val dummy1 = (f: ActorRefFactory) => f.actorOf(TestActors.blackholeProps)
+      val dummy2 = (f: ActorRefFactory) => f.actorOf(TestActors.blackholeProps)
+
+      val overseerProps = Overseer.props(joinRedisNodeSupervisorMaker, reshardClusterSupervisorMaker, dummy1, dummy2)
       val overseer = TestActorRef[Overseer](overseerProps)
 
       val msg: AddNode = AddMaster(redisURI)
@@ -143,7 +150,11 @@ class OverseerTest extends TestKit(testSystem)
 
       val joinRedisNodeSupervisorMaker = (f: ActorRefFactory) => f.actorOf(TestActors.blackholeProps)
       val reshardClusterSupervisorMaker = (f: ActorRefFactory) => probe.ref
-      val overseerProps = Overseer.props(joinRedisNodeSupervisorMaker, reshardClusterSupervisorMaker)
+
+      val dummy1 = (f: ActorRefFactory) => f.actorOf(TestActors.blackholeProps)
+      val dummy2 = (f: ActorRefFactory) => f.actorOf(TestActors.blackholeProps)
+
+      val overseerProps = Overseer.props(joinRedisNodeSupervisorMaker, reshardClusterSupervisorMaker, dummy1, dummy2)
       val overseer = TestActorRef[Overseer](overseerProps)
 
       overseer ! AddMaster(redisURI)

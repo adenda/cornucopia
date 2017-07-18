@@ -19,6 +19,16 @@ object ConfigNew {
     val executionContext: ExecutionContext
   }
 
+  trait ClusterReadyConfig {
+    val executionContext: ExecutionContext
+    val maxNrRetries: Int
+
+    /**
+      * Time in seconds to wait before checking if cluster is ready yet
+      */
+    val backOffTime: Int
+  }
+
 
 //  object ReshardClusterConfigImpl extends ReshardClusterConfig {
 //    val maxNrRetries: Int = -1 // TODO (note: -1 means infinite retries)
