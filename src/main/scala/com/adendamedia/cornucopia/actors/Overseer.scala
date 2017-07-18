@@ -6,6 +6,7 @@ import com.adendamedia.cornucopia.CornucopiaException._
 import com.adendamedia.cornucopia.redis.ClusterOperations
 import com.adendamedia.cornucopia.redis.ReshardTableNew.ReshardTableType
 import com.adendamedia.cornucopia.Config
+import com.adendamedia.cornucopia.redis.ClusterOperations.RedisUriToNodeId
 import com.lambdaworks.redis.RedisURI
 
 import scala.concurrent.duration._
@@ -14,10 +15,11 @@ object Overseer {
   def props(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
             reshardClusterSupervisorMaker: ActorRefFactory => ActorRef,
             clusterConnectionsSupervisorMaker: ActorRefFactory => ActorRef,
-            clusterReadySupervisorMaker: ActorRefFactory => ActorRef)
+            clusterReadySupervisorMaker: ActorRefFactory => ActorRef,
+            migrateSlotSupervisorMaker: ActorRefFactory => ActorRef)
            (implicit clusterOperations: ClusterOperations): Props =
     Props(new Overseer(joinRedisNodeSupervisorMaker, reshardClusterSupervisorMaker, clusterConnectionsSupervisorMaker,
-      clusterReadySupervisorMaker)
+      clusterReadySupervisorMaker, migrateSlotSupervisorMaker)
     )
 
   trait OverseerCommand
@@ -42,11 +44,11 @@ object Overseer {
   case class MasterNodeJoined(uri: RedisURI) extends NodeJoinedEvent
   case class SlaveNodeJoined(uri: RedisURI) extends NodeJoinedEvent
 
-  trait Reshard
+  trait Reshard extends OverseerCommand
   case class ReshardWithNewMaster(uri: RedisURI) extends Reshard
 
   case object GetClusterConnections extends OverseerCommand
-  case class GotClusterConnections(connections: ClusterOperations.ClusterConnectionsType)
+  case class GotClusterConnections(connections: (ClusterOperations.ClusterConnectionsType,ClusterOperations.RedisUriToNodeId))
 
   case class GotReshardTable(reshardTable: ReshardTableType)
 
@@ -55,6 +57,10 @@ object Overseer {
   case class WaitForClusterToBeReady(connections: ClusterOperations.ClusterConnectionsType) extends OverseerCommand
   case object ClusterIsReady
   case object ClusterNotReady
+
+  case class MigrateSlotsForNewMaster(newMasterUri: RedisURI, connections: ClusterOperations.ClusterConnectionsType,
+                                      redisUriToNodeId: RedisUriToNodeId,
+                                      reshardTable: ReshardTableType) extends OverseerCommand
 }
 
 /**
@@ -65,7 +71,8 @@ object Overseer {
 class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
                reshardClusterSupervisorMaker: ActorRefFactory => ActorRef,
                clusterConnectionsSupervisorMaker: ActorRefFactory => ActorRef,
-               clusterReadySupervisorMaker: ActorRefFactory => ActorRef)
+               clusterReadySupervisorMaker: ActorRefFactory => ActorRef,
+               migrateSlotSupervisorMaker: ActorRefFactory => ActorRef)
               (implicit clusterOperations: ClusterOperations) extends Actor with ActorLogging {
   import MessageBus.{AddNode, AddMaster, AddSlave, Shutdown, FailedAddingMasterRedisNode}
   import Overseer._
@@ -77,6 +84,7 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
   val reshardClusterSupervisor: ActorRef = reshardClusterSupervisorMaker(context)
   val clusterConnectionsSupervisor: ActorRef = clusterConnectionsSupervisorMaker(context)
   val clusterReadySupervisor: ActorRef = clusterReadySupervisorMaker(context)
+  val migrateSlotsSupervisor: ActorRef = migrateSlotSupervisorMaker(context)
 
   context.system.eventStream.subscribe(self, classOf[AddNode])
   context.system.eventStream.subscribe(self, classOf[Shutdown])
@@ -112,39 +120,53 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
       log.info(s"Master Redis node ${masterNodeJoined.uri} successfully joined")
       reshardClusterSupervisor ! ReshardWithNewMaster(uri)
       clusterConnectionsSupervisor ! GetClusterConnections
-      context.become(resharding(uri))
+      context.become(reshardingWithNewMaster(uri))
     case slaveNodeJoined: SlaveNodeJoined =>
       log.info(s"Slave Redis node ${slaveNodeJoined.uri} successfully joined")
       // TODO: replicate poorest master
   }
 
-  private def resharding(uri: RedisURI, reshardTable: Option[ReshardTableType] = None,
-                         clusterConnections: Option[ClusterConnectionsType] = None): Receive = {
+  /**
+    * Computing the reshard table and getting the cluster connections is done concurrently
+    * @param uri The Redis URI of the new master being added
+    * @param reshardTable The compute reshard table
+    * @param clusterConnections The connections to the master nodes
+    */
+  private def reshardingWithNewMaster(uri: RedisURI, reshardTable: Option[ReshardTableType] = None,
+                                      clusterConnections: Option[(ClusterConnectionsType, RedisUriToNodeId)] = None): Receive = {
     case reshard: ReshardWithNewMaster =>
       log.info(s"ReshardWithNewMaster $uri") // TODO: I can't remember why this should be here
     case GotClusterConnections(connections) =>
       log.info(s"Got cluster connections")
       reshardTable match {
         case Some(table) =>
-          clusterReadySupervisor ! WaitForClusterToBeReady(connections)
-          context.become(waitingForClusterToBeReady(uri, table, connections))
+          clusterReadySupervisor ! WaitForClusterToBeReady(connections._1)
+          context.become(waitingForClusterToBeReadyForNewMaster(uri, table, connections))
         case None =>
-          context.become(resharding(uri, reshardTable, Some(connections)))
+          context.become(reshardingWithNewMaster(uri, None, Some(connections)))
       }
     case GotReshardTable(table) =>
       log.info(s"Got rehard table")
       clusterConnections match {
         case Some(connections) =>
-          clusterReadySupervisor ! WaitForClusterToBeReady(connections)
-          context.become(waitingForClusterToBeReady(uri, table, connections))
+          clusterReadySupervisor ! WaitForClusterToBeReady(connections._1)
+          context.become(waitingForClusterToBeReadyForNewMaster(uri, table, connections))
         case None =>
-          context.become(resharding(uri, Some(table), clusterConnections))
+          context.become(reshardingWithNewMaster(uri, Some(table), None))
       }
   }
 
-  private def waitingForClusterToBeReady(uri: RedisURI, reshardTable: ReshardTableType,
-                                         clusterConnections: ClusterConnectionsType): Receive = {
-    case ClusterReady => // TODO: next step
+  private def waitingForClusterToBeReadyForNewMaster(uri: RedisURI, reshardTable: ReshardTableType,
+                                                     connections: (ClusterConnectionsType, RedisUriToNodeId)): Receive = {
+    case ClusterReady =>
+      log.info(s"Cluster is ready, migrating slots")
+      val msg = MigrateSlotsForNewMaster(uri, connections._1, connections._2, reshardTable)
+      migrateSlotsSupervisor ! msg
+      context.become(migratingSlotsForNewMaster(msg))
+  }
+
+  private def migratingSlotsForNewMaster(overseerCommand: OverseerCommand): Receive = {
+    case _ => // TODO: Publish that the new master was added successfully to cluster and resharding is complete
   }
 
 }

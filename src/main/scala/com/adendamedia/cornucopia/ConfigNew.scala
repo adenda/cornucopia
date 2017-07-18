@@ -29,6 +29,12 @@ object ConfigNew {
     val backOffTime: Int
   }
 
+  trait MigrateSlotsConfig {
+    val executionContext: ExecutionContext
+    val maxNrRetries: Int
+    val numberOfWorkers: Int
+  }
+
 
 //  object ReshardClusterConfigImpl extends ReshardClusterConfig {
 //    val maxNrRetries: Int = -1 // TODO (note: -1 means infinite retries)

@@ -62,7 +62,7 @@ class ClusterConnectionsTest extends TestKit(testSystem)
 
       implicit val executionContext: ExecutionContext = ClusterConnectionsConfigTest.executionContext
 
-      val dummyConnections = Map.empty[NodeId, Connection.Salad]
+      val dummyConnections = (Map.empty[NodeId, Connection.Salad], Map.empty[RedisUriString, NodeId])
 
       when(clusterOperations.getClusterConnections).thenReturn(
         Future.successful(dummyConnections)

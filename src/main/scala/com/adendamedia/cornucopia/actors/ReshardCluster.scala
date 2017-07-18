@@ -40,10 +40,10 @@ class ReshardClusterSupervisor(computeReshardTableMaker: ActorRefFactory => Acto
   import Overseer._
   import ReshardClusterSupervisor._
 
-  import context.dispatcher
-
   val getRedisSourceNodesProps = GetRedisSourceNodes.props(computeReshardTableMaker)
   val getRedisSourceNodes = context.actorOf(getRedisSourceNodesProps, GetRedisSourceNodes.name)
+
+  context.watch(getRedisSourceNodes)
 
   override def supervisorStrategy = OneForOneStrategy(config.maxNrRetries) {
     case _: FailedOverseerCommand => Restart
@@ -52,17 +52,22 @@ class ReshardClusterSupervisor(computeReshardTableMaker: ActorRefFactory => Acto
       Restart
   }
 
-  override def receive: Receive = {
+  override def receive: Receive = accepting
+
+  private def accepting: Receive = {
     case reshard: ReshardWithNewMaster =>
       log.info(s"Resharding with new master ${reshard.uri}")
-      getRedisSourceNodes forward reshard
+      getRedisSourceNodes ! reshard
       context.become(resharding(reshard))
   }
 
   private def resharding(reshard: Reshard): Receive = {
     case Retry =>
       log.info(s"Retrying to reshard cluster")
-      getRedisSourceNodes forward reshard
+      getRedisSourceNodes ! reshard
+    case Terminated =>
+      // TODO: publish message to event bus
+      context.become(accepting)
   }
 
 }
@@ -133,3 +138,4 @@ class ComputeReshardTable(implicit reshardTable: ReshardTableNew, config: Reshar
   }
 
 }
+

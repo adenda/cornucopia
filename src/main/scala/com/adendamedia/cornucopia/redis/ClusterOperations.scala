@@ -16,7 +16,9 @@ object ClusterOperations {
     extends Throwable(message, reason) with Serializable
 
   type NodeId = String
+  type RedisUriString = String
   type ClusterConnectionsType = Map[NodeId, Connection.Salad]
+  type RedisUriToNodeId = Map[RedisUriString, NodeId]
 }
 
 trait ClusterOperations {
@@ -27,7 +29,7 @@ trait ClusterOperations {
   def getRedisSourceNodes(targetRedisURI: RedisURI)
                          (implicit executionContext: ExecutionContext): Future[List[RedisClusterNode]]
 
-  def getClusterConnections(implicit executionContext: ExecutionContext): Future[ClusterConnectionsType]
+  def getClusterConnections(implicit executionContext: ExecutionContext): Future[(ClusterConnectionsType, RedisUriToNodeId)]
 
   /**
     * Checks if the cluster status of all Redis node connections is "OK"
@@ -112,7 +114,7 @@ object ClusterOperationsImpl extends ClusterOperations {
     * @param executionContext Execution context
     * @return Future of the cluster connections to master nodes
     */
-  def getClusterConnections(implicit executionContext: ExecutionContext): Future[ClusterConnectionsType] = {
+  def getClusterConnections(implicit executionContext: ExecutionContext): Future[(ClusterConnectionsType, RedisUriToNodeId)] = {
 
     implicit val saladAPI = newSaladAPI
 
@@ -128,7 +130,7 @@ object ClusterOperationsImpl extends ClusterOperations {
       } yield (master, getConnection(master.getNodeId))
     }
 
-    val result: Future[List[(NodeId, Connection.Salad)]] = connections.flatMap { conns =>
+    val result: Future[List[((NodeId, RedisUriString), Connection.Salad)]] = connections.flatMap { conns =>
       conns.unzip match {
         case (masters, futureConnections) =>
           val zero = List.empty[Connection.Salad]
@@ -136,17 +138,17 @@ object ClusterOperationsImpl extends ClusterOperations {
           Future.fold(futureConnections)(zero) { (cs1, conn) =>
             cs1 ++ List(conn)
           } map { cs: List[Connection.Salad] =>
-            masters.map(_.getNodeId).zip(cs)
+            masters.map(master => (master.getNodeId, master.getUri.toString)).zip(cs)
           }
       }
     }
 
-    val zero = Map.empty[NodeId, Connection.Salad]
+    val zero = (Map.empty[NodeId, Connection.Salad], Map.empty[RedisUriString, NodeId])
     result.map { cs =>
-      cs.foldLeft(zero) { (map, tuple) =>
+      cs.foldLeft(zero) { case ((connectionMap, uriMap), tuple) =>
         tuple match {
-          case (nodeId: NodeId, conn: Connection.Salad) =>
-            map + (nodeId -> conn)
+          case ((nodeId: NodeId, uri: RedisUriString), conn: Connection.Salad) =>
+            (connectionMap + (nodeId -> conn), uriMap + (uri -> nodeId))
         }
       }
     }
