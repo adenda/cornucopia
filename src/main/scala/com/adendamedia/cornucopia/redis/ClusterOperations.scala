@@ -160,7 +160,18 @@ object ClusterOperationsImpl extends ClusterOperations {
 
   def isClusterReady(clusterConnections: ClusterConnectionsType)
                     (implicit executionContext: ExecutionContext): Future[Boolean] = {
-    Future(true) // TODO
+
+    def isOk(info: Map[String,String]): Boolean = info("cluster_state") == "ok"
+
+    val stateOfAllNodes: List[Future[Boolean]] = for {
+      conn <- clusterConnections.values.toList
+    } yield {
+      for {
+        info <- conn.clusterInfo
+      } yield isOk(info)
+    }
+
+    Future.reduce(stateOfAllNodes)(_ && _)
   }
 
   def migrateSlot(slot: Slot, sourceNodeId: NodeId, targetNodeId: NodeId, clusterConnections: ClusterConnectionsType)
