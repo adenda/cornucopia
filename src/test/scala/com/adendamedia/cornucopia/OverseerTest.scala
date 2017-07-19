@@ -1,7 +1,7 @@
 package com.adendamedia.cornucopia
 
 import akka.testkit.{EventFilter, TestActorRef, TestKit, TestProbe, ImplicitSender, TestActors}
-import akka.actor.{ActorSystem, ActorRefFactory}
+import akka.actor.{ActorSystem, ActorRefFactory, ActorRef}
 import com.typesafe.config.ConfigFactory
 import com.adendamedia.cornucopia.actors.JoinRedisNodeSupervisor
 import com.adendamedia.cornucopia.redis.ClusterOperations
@@ -63,14 +63,22 @@ class OverseerTest extends TestKit(testSystem)
 
   trait SuccessTest extends Test {
     when(clusterOperations.addNodeToCluster(redisURI)).thenReturn(Future.successful(redisURI))
-
-//    val joinRedisNodeSupervisorMaker =
-//      (f: ActorRefFactory) => f.actorOf(JoinRedisNodeSupervisor.props, "joinRedisNodeSupervisor3")
-
     val joinRedisNodeSupervisor = TestActorRef[JoinRedisNodeSupervisor](JoinRedisNodeSupervisor.props)
+  }
 
-//    val overseerProps = Overseer.props(joinRedisNodeSupervisorMaker)
-//    val overseer = TestActorRef[Overseer](overseerProps)
+  trait MigrateTest {
+    import com.adendamedia.cornucopia.redis.ClusterOperations._
+    import com.adendamedia.cornucopia.redis.Connection
+    import com.adendamedia.cornucopia.redis.ReshardTableNew._
+
+    val uriString: String = "redis://192.168.0.100"
+    val redisURI: RedisURI = RedisURI.create(uriString)
+    implicit val clusterOperations: ClusterOperations = mock[ClusterOperations]
+    val testTargetNodeId = "target1"
+    val testRedisUriToNodeId: Map[RedisUriString, NodeId] = Map(uriString -> testTargetNodeId)
+    val dummyConnections: ClusterConnectionsType = Map.empty[NodeId, Connection.Salad]
+
+    val reshardTableMock: ReshardTableType = Map("node1" -> List(1, 2), "node2" -> List(3,4,5), "node3" -> List(6,7))
   }
 
   "Overseer" must {
@@ -164,6 +172,28 @@ class OverseerTest extends TestKit(testSystem)
       overseer ! MasterNodeJoined(redisURI)
 
       probe.expectMsg(ReshardWithNewMaster(redisURI))
+    }
+
+    "publish to event bus when the migrate slots job has completed successfully" in new MigrateTest {
+      val probe = TestProbe()
+      system.eventStream.subscribe(probe.ref, classOf[MasterNodeAdded])
+
+      val migrateMessage = MigrateSlotsForNewMaster(redisURI, dummyConnections, testRedisUriToNodeId, reshardTableMock)
+
+      val blackHole = (f: ActorRefFactory) => f.actorOf(TestActors.blackholeProps)
+
+      val props = Overseer.props(blackHole, blackHole, blackHole, blackHole, blackHole)
+      val overseer = TestActorRef[Overseer](props)
+
+      overseer ! AddMaster(redisURI)
+      overseer ! MasterNodeJoined(redisURI)
+      overseer ! GotClusterConnections(dummyConnections, testRedisUriToNodeId)
+      overseer ! GotReshardTable(reshardTableMock)
+      overseer ! ClusterIsReady
+      overseer ! JobCompleted(migrateMessage)
+
+      val msg = MasterNodeAdded(redisURI)
+      probe.expectMsg(msg)
     }
 
   }

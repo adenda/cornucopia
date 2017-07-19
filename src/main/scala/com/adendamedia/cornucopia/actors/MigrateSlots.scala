@@ -32,6 +32,8 @@ class MigrateSlotsSupervisor(migrateSlotsWorkerMaker: (ActorRefFactory, ActorRef
                             (implicit clusterOperations: ClusterOperations, config: MigrateSlotsConfig)
   extends CornucopiaSupervisor {
 
+  import Overseer._
+
   val props = MigrateSlotsJobManager.props(migrateSlotsWorkerMaker)
   val migrateSlotsJobManager = context.actorOf(props, MigrateSlotsJobManager.name)
 
@@ -44,7 +46,9 @@ class MigrateSlotsSupervisor(migrateSlotsWorkerMaker: (ActorRefFactory, ActorRef
   }
 
   override def processing(command: OverseerCommand): Receive = {
-    case _ =>
+    case Reset =>
+      log.debug("Reset migrate slot supervisor")
+      context.become(accepting)
   }
 
 }

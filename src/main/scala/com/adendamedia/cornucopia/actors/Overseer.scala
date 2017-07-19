@@ -63,6 +63,8 @@ object Overseer {
                                       reshardTable: ReshardTableType) extends OverseerCommand
 
   case class JobCompleted(job: OverseerCommand)
+
+  case object Reset extends OverseerCommand
 }
 
 /**
@@ -160,7 +162,7 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
 
   private def waitingForClusterToBeReadyForNewMaster(uri: RedisURI, reshardTable: ReshardTableType,
                                                      connections: (ClusterConnectionsType, RedisUriToNodeId)): Receive = {
-    case ClusterReady =>
+    case ClusterIsReady =>
       log.info(s"Cluster is ready, migrating slots")
       val msg = MigrateSlotsForNewMaster(uri, connections._1, connections._2, reshardTable)
       migrateSlotsSupervisor ! msg
@@ -168,7 +170,12 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
   }
 
   private def migratingSlotsForNewMaster(overseerCommand: OverseerCommand): Receive = {
-    case _ => // TODO: Publish that the new master was added successfully to cluster and resharding is complete
+    case JobCompleted(job: MigrateSlotsForNewMaster) =>
+      // TODO: Publish that the new master was added successfully to cluster and resharding is complete
+      log.info(s"Successfully added master node ${job.newMasterUri.toURI}")
+      migrateSlotsSupervisor ! Reset
+      context.system.eventStream.publish(MasterNodeAdded(job.newMasterUri))
+      context.become(acceptingCommands)
   }
 
 }
