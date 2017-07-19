@@ -2,7 +2,7 @@ package com.adendamedia.cornucopia.actors
 
 import akka.actor.SupervisorStrategy.Escalate
 import akka.actor.SupervisorStrategy.{Escalate, Restart}
-import akka.actor.{Actor, ActorLogging, ActorRef, ActorRefFactory, OneForOneStrategy, Props, Terminated}
+import akka.actor.{Actor, ActorLogging, ActorRef, ActorRefFactory, OneForOneStrategy, PoisonPill, Props, Terminated}
 import akka.pattern.pipe
 import akka.actor.Status.{Failure, Success}
 import com.adendamedia.cornucopia.redis.{ClusterOperations, ReshardTableNew}
@@ -60,7 +60,6 @@ object MigrateSlotsJobManager {
   case object GetJob
   case class MigrateSlotJob(sourceNodeId: NodeId, targetNodeId: NodeId, slot: Slot,
                             connections: ClusterOperations.ClusterConnectionsType) extends OverseerCommand
-  case class JobCompleted(job: MigrateSlotJobType)
 }
 
 /**
@@ -94,7 +93,7 @@ class MigrateSlotsJobManager(migrateSlotWorkerMaker: (ActorRefFactory, ActorRef)
 
     val workers = List.fill(config.numberOfWorkers)(migrateSlotWorkerMaker(context, self)).toSet
 
-    context.become(migratingSlotsForNewMaster(targetNodeId, connections, workers, ref,
+    context.become(migratingSlotsForNewMaster(targetNodeId, connections, migrateCommand, workers, ref,
                                               pendingSlots, runningSlots, completedSlots))
   }
 
@@ -121,7 +120,7 @@ class MigrateSlotsJobManager(migrateSlotWorkerMaker: (ActorRefFactory, ActorRef)
     * @param completedSlots Migrate slot job completed
     */
   private def migratingSlotsForNewMaster(targetNodeId: NodeId, connections: ClusterOperations.ClusterConnectionsType,
-                                         workers: Set[ActorRef], ref: ActorRef,
+                                         cmd: MigrateSlotsForNewMaster, workers: Set[ActorRef], ref: ActorRef,
                                          pendingSlots: Set[(NodeId, Slot)],
                                          runningSlots: Set[(NodeId, Slot)],
                                          completedSlots: Set[(NodeId, Slot)]): Receive = {
@@ -132,23 +131,23 @@ class MigrateSlotsJobManager(migrateSlotWorkerMaker: (ActorRefFactory, ActorRef)
           worker ! MigrateSlotJob(migrateSlot._1, targetNodeId, migrateSlot._2, connections)
           val updatedPendingSlots = pendingSlots - migrateSlot
           val updatedRunningSlots = runningSlots + migrateSlot
-          val newState = migratingSlotsForNewMaster(targetNodeId, connections, workers, ref,
+          val newState = migratingSlotsForNewMaster(targetNodeId, connections, cmd, workers, ref,
                                                     updatedPendingSlots, updatedRunningSlots, completedSlots)
           context.become(newState)
         case None =>
-          // TODO: We should be done here. There may be still jobs that are running at this point.
           // Keep workers around till we're sure all the slots
           // have been migrated, which happens when pendingSlots AND runningSlots is empty
           // So, in here check for if those two sets are empty, which means this worker processed the last successful
           // message. Then if that's the case, send a PoisonPill to all workers, and change behaviour/state to idle
           // again.
+          if (pendingSlots.isEmpty && runningSlots.isEmpty) finishJob(cmd, ref, workers)
       }
-    case JobCompleted(job: MigrateSlotJobType) =>
-      log.info(s"Successfully migrated slot ${job._2} from ${job._1} to $targetNodeId")
-      val updatedCompletedSlots = completedSlots + job
-      val updatedRunningSlots = runningSlots - job
-      // TODO: If running slots is now empty, and pending slots is now empty, that means we are done everything
-      val newState = migratingSlotsForNewMaster(targetNodeId, connections, workers, ref,
+    case JobCompleted(job: MigrateSlotJob) =>
+      log.info(s"Successfully migrated slot ${job.slot} from ${job.sourceNodeId} to $targetNodeId")
+      val migratedSlot: MigrateSlotJobType = (job.sourceNodeId, job.slot)
+      val updatedCompletedSlots = completedSlots + migratedSlot
+      val updatedRunningSlots = runningSlots - migratedSlot
+      val newState = migratingSlotsForNewMaster(targetNodeId, connections, cmd, workers, ref,
                                                 pendingSlots, updatedRunningSlots, updatedCompletedSlots)
       context.become(newState)
   }
@@ -156,6 +155,12 @@ class MigrateSlotsJobManager(migrateSlotWorkerMaker: (ActorRefFactory, ActorRef)
   private def getNextSlotToMigrate(pendingSlots: Set[(NodeId, Slot)]): Option[(NodeId, Slot)] = {
     if (pendingSlots.isEmpty) None
     else pendingSlots.headOption
+  }
+
+  private def finishJob(cmd: MigrateSlotsForNewMaster, ref: ActorRef, workers: Set[ActorRef]) = {
+    workers.foreach(_ ! PoisonPill)
+    ref ! JobCompleted(cmd)
+    context.become(idle)
   }
 
 }
@@ -193,7 +198,7 @@ class MigrateSlotWorker(jobManager: ActorRef)
     implicit val executionContext = config.executionContext
 
     clusterOperations.migrateSlot(job.slot, job.sourceNodeId, job.targetNodeId, job.connections) map { _ =>
-      JobCompleted(job.sourceNodeId, job.slot)
+      JobCompleted(job)
     } recover {
       case e =>
         // TODO: handle the different error conditions

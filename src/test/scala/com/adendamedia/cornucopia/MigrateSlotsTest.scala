@@ -24,7 +24,7 @@ import org.scalatest.mockito.MockitoSugar
 import MigrateSlotsTest._
 
 class MigrateSlotsTest extends TestKit(testSystem)
-  with WordSpecLike with BeforeAndAfterAll with MustMatchers with MockitoSugar {
+  with WordSpecLike with BeforeAndAfterAll with MustMatchers with MockitoSugar with ImplicitSender {
 
   import Overseer._
   import ClusterOperations._
@@ -48,6 +48,27 @@ class MigrateSlotsTest extends TestKit(testSystem)
     val testRedisUriToNodeId: Map[RedisUriString, NodeId] = Map(uriString -> testTargetNodeId)
   }
 
+  trait SuccessTest extends TestConfig {
+    implicit val executionContext: ExecutionContext = MigrateSlotsConfigTest.executionContext
+
+    val reshardTableMock: ReshardTableType = Map("node1" -> List(1, 2),
+      "node2" -> List(3,4,5),
+      "node3" -> List(6,7))
+
+    val migrateSlotWorkerMaker = (f: ActorRefFactory, m: ActorRef) => f.actorOf(MigrateSlotWorker.props(m), MigrateSlotWorker.name)
+
+    val dummyConnections: ClusterConnectionsType = Map.empty[NodeId, Connection.Salad]
+
+    val props = MigrateSlotsJobManager.props(migrateSlotWorkerMaker)
+    val migrateSlotsJobManager = TestActorRef[MigrateSlotsJobManager](props)
+
+    when(
+      clusterOperations.migrateSlot(anyInt(), anyString(), anyString(), anyObject())(anyObject())
+    ).thenReturn(
+      Future.successful()
+    )
+  }
+
   "MigrateSlotWorker" must {
     "ask for a job" in new TestConfig {
       val probe = TestProbe()
@@ -69,26 +90,7 @@ class MigrateSlotsTest extends TestKit(testSystem)
   }
 
   "MigrateSlotsJobManager" should {
-    "migrate slots" in new TestConfig {
-      implicit val executionContext: ExecutionContext = MigrateSlotsConfigTest.executionContext
-
-      val reshardTableMock: ReshardTableType = Map("node1" -> List(1, 2),
-        "node2" -> List(3,4,5),
-        "node3" -> List(6,7))
-
-      val migrateSlotWorkerMaker = (f: ActorRefFactory, m: ActorRef) => f.actorOf(MigrateSlotWorker.props(m), MigrateSlotWorker.name)
-
-      val dummyConnections: ClusterConnectionsType = Map.empty[NodeId, Connection.Salad]
-
-      val props = MigrateSlotsJobManager.props(migrateSlotWorkerMaker)
-      val migrateSlotsJobManager = TestActorRef[MigrateSlotsJobManager](props)
-
-      when(
-        clusterOperations.migrateSlot(anyInt(), anyString(), anyString(), anyObject())(anyObject())
-      ).thenReturn(
-        Future.successful()
-      )
-
+    "migrate slots" in new SuccessTest {
       val msg = MigrateSlotsForNewMaster(redisURI, dummyConnections, testRedisUriToNodeId, reshardTableMock)
 
       val pat = s"Successfully migrated slot \\d from node\\d to $testTargetNodeId"
@@ -98,6 +100,16 @@ class MigrateSlotsTest extends TestKit(testSystem)
         migrateSlotsJobManager ! msg
       }
 
+    }
+  }
+
+  "MigrateSlotsJobManager" should {
+    "signal to supervisor once it has completed its jobs" in new SuccessTest {
+      val msg = MigrateSlotsForNewMaster(redisURI, dummyConnections, testRedisUriToNodeId, reshardTableMock)
+
+      migrateSlotsJobManager ! msg
+
+      expectMsg(JobCompleted(msg))
     }
   }
 

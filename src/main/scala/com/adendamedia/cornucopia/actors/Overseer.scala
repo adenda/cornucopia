@@ -61,6 +61,8 @@ object Overseer {
   case class MigrateSlotsForNewMaster(newMasterUri: RedisURI, connections: ClusterOperations.ClusterConnectionsType,
                                       redisUriToNodeId: RedisUriToNodeId,
                                       reshardTable: ReshardTableType) extends OverseerCommand
+
+  case class JobCompleted(job: OverseerCommand)
 }
 
 /**
