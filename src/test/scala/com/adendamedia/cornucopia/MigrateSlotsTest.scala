@@ -12,6 +12,7 @@ import com.adendamedia.cornucopia.redis.ReshardTableNew._
 import com.adendamedia.cornucopia.ConfigNew.ClusterReadyConfig
 import org.scalatest.{BeforeAndAfterAll, MustMatchers, WordSpecLike}
 import org.mockito.Mockito._
+import org.mockito.Matchers._
 
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
@@ -33,10 +34,8 @@ class MigrateSlotsTest extends TestKit(testSystem)
   }
 
   trait TestConfig {
-    val uriString1: String = "redis://192.168.0.100"
-    val uriString2: String = "redis://192.168.0.200"
-    val redisURI1: RedisURI = RedisURI.create(uriString1)
-    val redisURI2: RedisURI = RedisURI.create(uriString2)
+    val uriString: String = "redis://192.168.0.100"
+    val redisURI: RedisURI = RedisURI.create(uriString)
     implicit object MigrateSlotsConfigTest extends MigrateSlotsConfig {
       val executionContext: ExecutionContext = system.dispatcher
       val maxNrRetries: Int = 10
@@ -44,7 +43,9 @@ class MigrateSlotsTest extends TestKit(testSystem)
     }
     implicit val clusterOperations: ClusterOperations = mock[ClusterOperations]
 
-    val testRedisUriToNodeId: Map[RedisUriString, NodeId] = Map(uriString1 -> "1", uriString2 -> "2")
+    val testTargetNodeId = "target1"
+
+    val testRedisUriToNodeId: Map[RedisUriString, NodeId] = Map(uriString -> testTargetNodeId)
   }
 
   "MigrateSlotWorker" must {
@@ -59,11 +60,44 @@ class MigrateSlotsTest extends TestKit(testSystem)
       val dummyConnections = Map.empty[NodeId, Connection.Salad]
       val dummyReshardTable = Map.empty[NodeId, List[Slot]]
 
-      val msg = MigrateSlotsForNewMaster(redisURI1, dummyConnections, testRedisUriToNodeId, dummyReshardTable)
+      val msg = MigrateSlotsForNewMaster(redisURI, dummyConnections, testRedisUriToNodeId, dummyReshardTable)
 
       migrateSlotJobManager ! msg
 
       probe.expectMsgAllOf(GetJob, GetJob)
+    }
+  }
+
+  "MigrateSlotsJobManager" should {
+    "migrate slots" in new TestConfig {
+      implicit val executionContext: ExecutionContext = MigrateSlotsConfigTest.executionContext
+
+      val reshardTableMock: ReshardTableType = Map("node1" -> List(1, 2),
+        "node2" -> List(3,4,5),
+        "node3" -> List(6,7))
+
+      val migrateSlotWorkerMaker = (f: ActorRefFactory, m: ActorRef) => f.actorOf(MigrateSlotWorker.props(m), MigrateSlotWorker.name)
+
+      val dummyConnections: ClusterConnectionsType = Map.empty[NodeId, Connection.Salad]
+
+      val props = MigrateSlotsJobManager.props(migrateSlotWorkerMaker)
+      val migrateSlotsJobManager = TestActorRef[MigrateSlotsJobManager](props)
+
+      when(
+        clusterOperations.migrateSlot(anyInt(), anyString(), anyString(), anyObject())(anyObject())
+      ).thenReturn(
+        Future.successful()
+      )
+
+      val msg = MigrateSlotsForNewMaster(redisURI, dummyConnections, testRedisUriToNodeId, reshardTableMock)
+
+      val pat = s"Successfully migrated slot \\d from node\\d to $testTargetNodeId"
+
+      EventFilter.info(pattern = pat,
+        occurrences = 7) intercept {
+        migrateSlotsJobManager ! msg
+      }
+
     }
   }
 

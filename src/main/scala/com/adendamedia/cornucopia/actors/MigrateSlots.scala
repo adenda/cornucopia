@@ -58,7 +58,8 @@ object MigrateSlotsJobManager {
 
   type MigrateSlotJobType = (NodeId, Slot)
   case object GetJob
-  case class MigrateSlotJob(sourceNodeId: NodeId, targetNodeId: NodeId, slot: Slot)
+  case class MigrateSlotJob(sourceNodeId: NodeId, targetNodeId: NodeId, slot: Slot,
+                            connections: ClusterOperations.ClusterConnectionsType) extends OverseerCommand
   case class JobCompleted(job: MigrateSlotJobType)
 }
 
@@ -128,17 +129,22 @@ class MigrateSlotsJobManager(migrateSlotWorkerMaker: (ActorRefFactory, ActorRef)
       val worker = sender
       getNextSlotToMigrate(pendingSlots) match {
         case Some(migrateSlot) =>
-          worker ! MigrateSlotJob(migrateSlot._1, targetNodeId, migrateSlot._2)
+          worker ! MigrateSlotJob(migrateSlot._1, targetNodeId, migrateSlot._2, connections)
           val updatedPendingSlots = pendingSlots - migrateSlot
           val updatedRunningSlots = runningSlots + migrateSlot
           val newState = migratingSlotsForNewMaster(targetNodeId, connections, workers, ref,
                                                     updatedPendingSlots, updatedRunningSlots, completedSlots)
           context.become(newState)
         case None =>
-          // TODO: We should be done here. There may be still jobs that are running at this point. We should then kill
-          //       the worker by sending a Poison Pill
+          // TODO: We should be done here. There may be still jobs that are running at this point.
+          // Keep workers around till we're sure all the slots
+          // have been migrated, which happens when pendingSlots AND runningSlots is empty
+          // So, in here check for if those two sets are empty, which means this worker processed the last successful
+          // message. Then if that's the case, send a PoisonPill to all workers, and change behaviour/state to idle
+          // again.
       }
     case JobCompleted(job: MigrateSlotJobType) =>
+      log.info(s"Successfully migrated slot ${job._2} from ${job._1} to $targetNodeId")
       val updatedCompletedSlots = completedSlots + job
       val updatedRunningSlots = runningSlots - job
       // TODO: If running slots is now empty, and pending slots is now empty, that means we are done everything
@@ -172,15 +178,26 @@ class MigrateSlotWorker(jobManager: ActorRef)
                        (implicit clusterOperations: ClusterOperations, config: MigrateSlotsConfig) extends
   Actor with ActorLogging {
 
+  import Overseer._
   import MigrateSlotsJobManager._
 
   jobManager ! GetJob
 
   override def receive: Receive = {
-    case job: MigrateSlotJob => doJob(job)
+    case job: MigrateSlotJob => doJob(job, sender)
   }
 
-  private def doJob(job: MigrateSlotJob) = {
-    // TODO
+  private def doJob(job: MigrateSlotJob, ref: ActorRef) = {
+    log.debug(s"Migrating slot ${job.slot} from ${job.sourceNodeId} to ${job.targetNodeId}")
+
+    implicit val executionContext = config.executionContext
+
+    clusterOperations.migrateSlot(job.slot, job.sourceNodeId, job.targetNodeId, job.connections) map { _ =>
+      JobCompleted(job.sourceNodeId, job.slot)
+    } recover {
+      case e =>
+        // TODO: handle the different error conditions
+        self ! KillChild(job)
+    } pipeTo ref map(_ => jobManager ! GetJob)
   }
 }

@@ -3,6 +3,7 @@ package com.adendamedia.cornucopia.redis
 //import com.adendamedia.cornucopia.CornucopiaException._
 import org.slf4j.LoggerFactory
 import com.adendamedia.cornucopia.redis.Connection._
+import com.adendamedia.cornucopia.redis.ReshardTableNew._
 import com.lambdaworks.redis.cluster.models.partitions.RedisClusterNode
 import com.adendamedia.salad.SaladClusterAPI
 
@@ -39,6 +40,9 @@ trait ClusterOperations {
     */
   def isClusterReady(clusterConnections: ClusterConnectionsType)
                     (implicit executionContext: ExecutionContext): Future[Boolean]
+
+  def migrateSlot(slot: Slot, sourceNodeId: NodeId, targetNodeId: NodeId, clusterConnections: ClusterConnectionsType)
+                 (implicit executionContext: ExecutionContext): Future[Unit]
 }
 
 object ClusterOperationsImpl extends ClusterOperations {
@@ -157,6 +161,11 @@ object ClusterOperationsImpl extends ClusterOperations {
   def isClusterReady(clusterConnections: ClusterConnectionsType)
                     (implicit executionContext: ExecutionContext): Future[Boolean] = {
     Future(true) // TODO
+  }
+
+  def migrateSlot(slot: Slot, sourceNodeId: NodeId, targetNodeId: NodeId, clusterConnections: ClusterConnectionsType)
+    (implicit executionContext: ExecutionContext): Future[Unit] = {
+    Future(Unit)
   }
 
 }
