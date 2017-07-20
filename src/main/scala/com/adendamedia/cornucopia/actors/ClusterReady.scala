@@ -27,7 +27,7 @@ class ClusterReadySupervisor(implicit config: ClusterReadyConfig, clusterOperati
   override def supervisorStrategy = OneForOneStrategy(config.maxNrRetries) {
     case e: FailedOverseerCommand =>
       log.error("Error waiting for node to become ready, retrying")
-      clusterReady ! e.overseerCommand
+      scheduleReadinessCheck(e.overseerCommand)
       Restart
   }
 
@@ -39,18 +39,23 @@ class ClusterReadySupervisor(implicit config: ClusterReadyConfig, clusterOperati
       context.become(waitingForClusterToBeReady(sender, wait))
   }
 
+  private def scheduleReadinessCheck(cmd: OverseerCommand) = {
+    val delay: Int = config.backOffTime
+    log.warning(s"Cluster not yet ready, checking again in $delay seconds")
+    implicit val executionContext = config.executionContext
+    context.system.scheduler.scheduleOnce(delay.seconds) {
+      clusterReady ! cmd
+    }
+  }
+
   private def waitingForClusterToBeReady(ref: ActorRef, wait: WaitForClusterToBeReady): Receive = {
     case ClusterIsReady =>
       ref forward ClusterIsReady
       context.become(accepting)
     case ClusterNotReady =>
-      val delay: Int = config.backOffTime
-      log.warning(s"Cluster not yet ready, checking again in $delay seconds")
-      implicit val executionContext = config.executionContext
-      context.system.scheduler.scheduleOnce(delay.seconds) {
-        clusterReady ! wait
-      }
+      scheduleReadinessCheck(wait)
   }
+
 }
 
 object ClusterReady {
@@ -67,16 +72,14 @@ class ClusterReady(implicit config: ClusterReadyConfig, clusterOperations: Clust
 
   override def receive: Receive = {
     case wait: WaitForClusterToBeReady => waitForClusterToBeReady(wait, sender)
-    case KillChild(cmd) => throw FailedOverseerCommand(cmd)
+    case KillChild(cmd, _) => throw FailedOverseerCommand(cmd)
   }
 
   private def waitForClusterToBeReady(ready: WaitForClusterToBeReady, ref: ActorRef) = {
     implicit val executionContext = config.executionContext
     clusterOperations.isClusterReady(ready.connections) map {
       case true => ClusterIsReady
-      case false =>
-        log.error(s"Cluster is not ready!")
-        throw FailedOverseerCommand(ready)
+      case false => ClusterNotReady
     } recover {
       case e => self ! KillChild(ready)
     } pipeTo ref

@@ -75,10 +75,10 @@ class ClusterReadyTest extends TestKit(testSystem)
       val props = ClusterReadySupervisor.props
       val clusterReadySupervisor = TestActorRef[ClusterReadySupervisor](props)
 
-      val expectedErrorMessage = "Cluster is not ready!"
+      val expectedWarningMessagePattern = s"Cluster not yet ready, checking again in ${ClusterReadyConfigTest.backOffTime} seconds"
       val msg = WaitForClusterToBeReady(dummyConnections)
 
-      EventFilter.error(message = expectedErrorMessage,
+      EventFilter.warning(message = expectedWarningMessagePattern,
         occurrences = ClusterReadyConfigTest.maxNrRetries + 1) intercept {
         clusterReadySupervisor ! msg
       }
