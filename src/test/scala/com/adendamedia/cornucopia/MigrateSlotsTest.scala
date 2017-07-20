@@ -45,7 +45,7 @@ class MigrateSlotsTest extends TestKit(testSystem)
 
     val testTargetNodeId = "target1"
 
-    val testRedisUriToNodeId: Map[RedisUriString, NodeId] = Map(uriString -> testTargetNodeId)
+    val testRedisUriToNodeId: Map[RedisUriString, NodeId] = Map(redisURI.toString -> testTargetNodeId)
   }
 
   trait SuccessTest extends TestConfig {
@@ -60,7 +60,13 @@ class MigrateSlotsTest extends TestKit(testSystem)
     val dummyConnections: ClusterConnectionsType = Map.empty[NodeId, Connection.Salad]
 
     when(
-      clusterOperations.migrateSlot(anyInt(), anyString(), anyString(), anyObject())(anyObject())
+      clusterOperations.setSlotAssignment(anyInt(), anyString(), anyString(), anyObject())(anyObject())
+    ).thenReturn(
+      Future.successful()
+    )
+
+    when(
+      clusterOperations.migrateSlotKeys(anyInt(), anyObject(), anyString(), anyString(), anyObject())(anyObject())
     ).thenReturn(
       Future.successful()
     )

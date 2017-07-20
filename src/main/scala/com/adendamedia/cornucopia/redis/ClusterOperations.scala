@@ -16,6 +16,22 @@ object ClusterOperations {
   case class CornucopiaRedisConnectionException(message: String, reason: Throwable = None.orNull)
     extends Throwable(message, reason) with Serializable
 
+  @SerialVersionUID(1L)
+  case class SetSlotAssignmentException(message: String, reason: Throwable = None.orNull)
+    extends Throwable(message, reason) with Serializable
+
+  @SerialVersionUID(1L)
+  case class MigrateSlotKeysBusyKeyException(message: String = "BUSYKEY", reason: Throwable = None.orNull)
+    extends Throwable(message, reason) with Serializable
+
+  @SerialVersionUID(1L)
+  case class MigrateSlotKeysClusterDownException(message: String = "CLUSTERDOWN", reason: Throwable = None.orNull)
+    extends Throwable(message, reason) with Serializable
+
+  @SerialVersionUID(1L)
+  case class MigrateSlotKeysMovedException(message: String = "MOVED", reason: Throwable = None.orNull)
+    extends Throwable(message, reason) with Serializable
+
   type NodeId = String
   type RedisUriString = String
   type ClusterConnectionsType = Map[NodeId, Connection.Salad]
@@ -41,8 +57,14 @@ trait ClusterOperations {
   def isClusterReady(clusterConnections: ClusterConnectionsType)
                     (implicit executionContext: ExecutionContext): Future[Boolean]
 
-  def migrateSlot(slot: Slot, sourceNodeId: NodeId, targetNodeId: NodeId, clusterConnections: ClusterConnectionsType)
-                 (implicit executionContext: ExecutionContext): Future[Unit]
+  def setSlotAssignment(slot: Slot, sourceNodeId: NodeId, targetNodeId: NodeId,
+                        clusterConnections: ClusterConnectionsType)
+                       (implicit executionContext: ExecutionContext): Future[Unit]
+
+  def migrateSlotKeys(slot: Slot, targetRedisURI: RedisURI, sourceNodeId: NodeId, targetNodeId: NodeId,
+                      clusterConnections: ClusterConnectionsType)
+                     (implicit executionContext: ExecutionContext): Future[Unit]
+
 }
 
 object ClusterOperationsImpl extends ClusterOperations {
@@ -174,9 +196,69 @@ object ClusterOperationsImpl extends ClusterOperations {
     Future.reduce(stateOfAllNodes)(_ && _)
   }
 
-  def migrateSlot(slot: Slot, sourceNodeId: NodeId, targetNodeId: NodeId, clusterConnections: ClusterConnectionsType)
-    (implicit executionContext: ExecutionContext): Future[Unit] = {
-    Future(Unit)
+  def setSlotAssignment(slot: Slot, sourceNodeId: NodeId, targetNodeId: NodeId,
+                        clusterConnections: ClusterConnectionsType)
+                       (implicit executionContext: ExecutionContext): Future[Unit] = {
+    val result = for {
+      sourceConn <- clusterConnections.get(sourceNodeId)
+      destinationConn <- clusterConnections.get(targetNodeId)
+    } yield {
+      (for {
+        _ <- destinationConn.clusterSetSlotImporting(slot, sourceNodeId)
+        _ <- sourceConn.clusterSetSlotMigrating(slot, targetNodeId)
+      } yield { }) recover {
+        case e => throw SetSlotAssignmentException(s"There was a problem setting slot assignment for slot $slot", e)
+      }
+    }
+    result match {
+      case Some(slotAssignment) => slotAssignment
+      case _ =>
+        throw CornucopiaRedisConnectionException("Problem getting redis connections")
+    }
+  }
+
+  private def getConnectionForNode(clusterConnections: ClusterConnectionsType, nodeId: NodeId)
+                                  (implicit executionContext: ExecutionContext): Future[Connection.Salad] = {
+    Future {
+      clusterConnections.get(nodeId) match {
+        case Some(id) => id
+        case None => throw CornucopiaRedisConnectionException("Problem getting redis connections")
+      }
+    }
+  }
+
+  def migrateSlotKeys(slot: Slot, targetRedisURI: RedisURI, sourceNodeId: NodeId, targetNodeId: NodeId,
+                      clusterConnections: ClusterConnectionsType)
+                     (implicit executionContext: ExecutionContext): Future[Unit] = {
+
+    import com.adendamedia.salad.serde.ByteArraySerdes._
+
+    lazy val res: Future[Unit] = (for {
+      sourceConn <- getConnectionForNode(clusterConnections, sourceNodeId)
+      keyCount <- sourceConn.clusterCountKeysInSlot(slot)
+      keys <- sourceConn.clusterGetKeysInSlot[CodecType](slot, keyCount.toInt)
+      result <- sourceConn.migrate[CodecType](targetRedisURI, keys.toList)
+    } yield result) recover { case e =>
+      handleFailedMigration(e)
+    }
+
+    def handleFailedMigration(error: Throwable): Future[Unit] = {
+      val errorString = error.toString
+
+      def findError(e: String, identifier: String): Boolean = {
+        identifier.r.findFirstIn(e) match {
+          case Some(_) => true
+          case _ => false
+        }
+      }
+
+      if (findError(errorString, "BUSYKEY")) throw MigrateSlotKeysBusyKeyException(reason = error)
+      else if (findError(errorString, "CLUSTERDOWN")) throw MigrateSlotKeysClusterDownException(reason = error)
+      else if (findError(errorString, "MOVED")) throw MigrateSlotKeysMovedException(reason = error)
+      else throw error
+    }
+
+    res
   }
 
 }
