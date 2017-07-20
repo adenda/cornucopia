@@ -1,14 +1,14 @@
 package com.adendamedia.cornucopia.actors
 
 import akka.actor.SupervisorStrategy.Escalate
-import akka.actor.SupervisorStrategy.{Restart, Escalate}
+import akka.actor.SupervisorStrategy.{Escalate, Restart}
 import akka.actor.{Actor, ActorLogging, ActorRef, ActorRefFactory, OneForOneStrategy, Props, Terminated}
 import akka.pattern.pipe
 import akka.actor.Status.{Failure, Success}
 import com.adendamedia.cornucopia.redis.{ClusterOperations, ReshardTableNew}
 import com.adendamedia.cornucopia.CornucopiaException._
 import com.adendamedia.cornucopia.ConfigNew.ReshardClusterConfig
-import Overseer.{OverseerCommand, ReshardWithNewMaster}
+import Overseer.{GotReshardTable, OverseerCommand, ReshardWithNewMaster}
 
 import scala.concurrent.duration._
 import scala.concurrent.{ExecutionContext, Future}
@@ -58,15 +58,18 @@ class ReshardClusterSupervisor(computeReshardTableMaker: ActorRefFactory => Acto
     case reshard: ReshardWithNewMaster =>
       log.info(s"Resharding with new master ${reshard.uri}")
       getRedisSourceNodes ! reshard
-      context.become(resharding(reshard))
+      context.become(resharding(reshard, sender))
   }
 
-  private def resharding(reshard: Reshard): Receive = {
+  private def resharding(reshard: Reshard, ref: ActorRef): Receive = {
     case Retry =>
       log.info(s"Retrying to reshard cluster")
       getRedisSourceNodes ! reshard
     case Terminated =>
       // TODO: publish message to event bus
+      context.become(accepting)
+    case table: GotReshardTable =>
+      ref ! table
       context.become(accepting)
   }
 
@@ -101,7 +104,15 @@ class GetRedisSourceNodes(computeReshardTableMaker: ActorRefFactory => ActorRef)
   val computeReshardTable = computeReshardTableMaker(context)
 
   override def receive: Receive = {
-    case reshard: ReshardWithNewMaster => getRedisSourceNodes(reshard)
+    case reshard: ReshardWithNewMaster =>
+      getRedisSourceNodes(reshard)
+      context.become(gettingReshardTable(sender))
+  }
+
+  private def gettingReshardTable(ref: ActorRef): Receive = {
+    case table: GotReshardTable =>
+      ref ! table
+      context.unbecome()
   }
 
   private def getRedisSourceNodes(reshard: ReshardWithNewMaster) = {
@@ -129,12 +140,13 @@ class ComputeReshardTable(implicit reshardTable: ReshardTableNew, config: Reshar
   override def receive: Receive = {
     case (uri: RedisURI, sourceNodes: SourceNodes) =>
       log.info(s"Computing reshard table to add new master ${uri.toURI}")
-      computeReshardTable(uri, sourceNodes)
+      computeReshardTable(uri, sourceNodes, sender)
   }
 
-  def computeReshardTable(uri: RedisURI, sourceNodes: SourceNodes) = {
+  def computeReshardTable(uri: RedisURI, sourceNodes: SourceNodes, ref: ActorRef) = {
     implicit val expectedTotalNumberSlots: Int = config.expectedTotalNumberSlots
     val table: ReshardTableType = reshardTable.computeReshardTable(sourceNodes.nodes)
+    ref ! GotReshardTable(table)
   }
 
 }

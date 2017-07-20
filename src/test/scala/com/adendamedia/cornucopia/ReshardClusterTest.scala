@@ -1,9 +1,9 @@
 package com.adendamedia.cornucopia
 
-import akka.testkit.{EventFilter, TestActorRef, TestKit, TestProbe, ImplicitSender, TestActors}
-import akka.actor.{ActorSystem, ActorRefFactory}
+import akka.testkit.{EventFilter, ImplicitSender, TestActorRef, TestActors, TestKit, TestProbe}
+import akka.actor.{ActorRefFactory, ActorSystem}
 import com.typesafe.config.ConfigFactory
-import com.adendamedia.cornucopia.actors.{ReshardClusterSupervisor, GetRedisSourceNodes, ComputeReshardTable}
+import com.adendamedia.cornucopia.actors.{ComputeReshardTable, GetRedisSourceNodes, ReshardClusterSupervisor}
 import com.adendamedia.cornucopia.redis.ClusterOperations
 import com.adendamedia.cornucopia.redis.ReshardTableNew
 import org.scalatest.{BeforeAndAfterAll, MustMatchers, WordSpecLike}
@@ -17,11 +17,11 @@ import com.adendamedia.cornucopia.actors.MessageBus
 import com.adendamedia.cornucopia.actors.Overseer
 import com.adendamedia.cornucopia.CornucopiaException._
 import org.scalatest.mockito.MockitoSugar
-
 import ReshardClusterTest._
+import com.adendamedia.cornucopia.redis.ReshardTableNew.ReshardTableType
 
 class ReshardClusterTest extends TestKit(testSystem)
-  with WordSpecLike with BeforeAndAfterAll with MustMatchers with MockitoSugar {
+  with WordSpecLike with BeforeAndAfterAll with MustMatchers with MockitoSugar with ImplicitSender {
 
   import Overseer._
 
@@ -42,6 +42,38 @@ class ReshardClusterTest extends TestKit(testSystem)
       val maxNrRetries: Int = 2
       override val expectedTotalNumberSlots: Int = 42 // doesn't matter we're not testing this here
       val executionContext: ExecutionContext = system.dispatcher
+    }
+  }
+
+  "ReshardClusterSupervisor" must {
+    "receive the reshard table and forward it to its sender" in new ReshardTest with ReshardClusterConfigTest {
+      import ReshardTableNew._
+      implicit val clusterOperations: ClusterOperations = mock[ClusterOperations]
+      val dummySourceNodes = List(new RedisClusterNode)
+
+      implicit val ec: ExecutionContext = system.dispatcher
+
+      when(clusterOperations.getRedisSourceNodes(redisURI1)).thenReturn(
+        Future.successful(dummySourceNodes)
+      )
+
+      val dummyReshardTable: ReshardTableType = Map.empty[NodeId, List[Slot]]
+
+      implicit val reshardTable: ReshardTableNew = mock[ReshardTableNew]
+      implicit val expectedTotalNumberSlots: Int = ReshardClusterConfigTest.expectedTotalNumberSlots
+      when(reshardTable.computeReshardTable(dummySourceNodes)).thenReturn(dummyReshardTable)
+
+      val computeReshardTableFactory =
+        (f: ActorRefFactory) => f.actorOf(ComputeReshardTable.props, ComputeReshardTable.name)
+
+      val props = ReshardClusterSupervisor.props(computeReshardTableFactory)
+      val reshardClusterSupervisor = TestActorRef[ReshardClusterSupervisor](props)
+
+      reshardClusterSupervisor ! ReshardWithNewMaster(redisURI1)
+
+      expectMsg(
+        GotReshardTable(dummyReshardTable)
+      )
     }
   }
 
