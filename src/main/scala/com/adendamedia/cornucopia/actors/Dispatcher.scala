@@ -42,7 +42,7 @@ class Dispatcher extends Actor with ActorLogging {
   private def accepting: Receive = {
     case task: DispatchTask =>
       publishTask(task.operation, task.redisURI)
-      context.system.scheduler.scheduleOnce(dispatchTaskTimeout.seconds, self, CheckTimeout)
+//      context.system.scheduler.scheduleOnce(dispatchTaskTimeout.seconds, self, CheckTimeout)
       val dispatchInformation = DispatchInformation(task, sender)
       context.become(dispatching(dispatchInformation))
     case event: NodeAdded =>

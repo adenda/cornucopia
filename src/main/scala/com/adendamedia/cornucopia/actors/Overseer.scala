@@ -22,6 +22,8 @@ object Overseer {
       clusterReadySupervisorMaker, migrateSlotSupervisorMaker)
     )
 
+  val name = "overseer"
+
   trait OverseerCommand
 
   trait NodeAddedEvent {
@@ -52,7 +54,7 @@ object Overseer {
 
   case class GotReshardTable(reshardTable: ReshardTableType)
 
-  case class KillChild(command: OverseerCommand)
+  case class KillChild(command: OverseerCommand, reason: Option[Throwable] = None)
 
   case class WaitForClusterToBeReady(connections: ClusterOperations.ClusterConnectionsType) extends OverseerCommand
   case object ClusterIsReady
@@ -144,8 +146,16 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
       log.info(s"Got cluster connections")
       reshardTable match {
         case Some(table) =>
-          clusterReadySupervisor ! WaitForClusterToBeReady(connections._1)
-          context.become(waitingForClusterToBeReadyForNewMaster(uri, table, connections))
+          if (connectionsAreValidForAddingNewMaster(table, connections, uri)) {
+            clusterReadySupervisor ! WaitForClusterToBeReady(connections._1)
+            context.become(waitingForClusterToBeReadyForNewMaster(uri, table, connections))
+          }
+          else {
+            context.system.scheduler.scheduleOnce(1 seconds) {
+              clusterConnectionsSupervisor ! GetClusterConnections
+            }
+            context.become(reshardingWithNewMaster(uri, Some(table), None)) // discard invalid connections
+          }
         case None =>
           context.become(reshardingWithNewMaster(uri, None, Some(connections)))
       }
@@ -153,11 +163,28 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
       log.info(s"Got rehard table")
       clusterConnections match {
         case Some(connections) =>
-          clusterReadySupervisor ! WaitForClusterToBeReady(connections._1)
-          context.become(waitingForClusterToBeReadyForNewMaster(uri, table, connections))
+          if (connectionsAreValidForAddingNewMaster(table, connections, uri)) {
+            clusterReadySupervisor ! WaitForClusterToBeReady(connections._1)
+            context.become(waitingForClusterToBeReadyForNewMaster(uri, table, connections))
+          }
+          else {
+            context.system.scheduler.scheduleOnce(1 seconds) {
+              clusterConnectionsSupervisor ! GetClusterConnections
+            }
+            context.become(reshardingWithNewMaster(uri, Some(table), None)) // discard invalid connections
+          }
         case None =>
           context.become(reshardingWithNewMaster(uri, Some(table), None))
       }
+  }
+
+  private def connectionsAreValidForAddingNewMaster(table: ReshardTableType,
+                                                    connections: (ClusterConnectionsType, RedisUriToNodeId),
+                                                    newRedisUri: RedisURI) = {
+    // Since we validated the number of slots in the reshard table, we can be sure that it has all the master NodeId's in it
+    val numNodes = table.keys.count(_ => true)
+    val numConnections = connections._1.keys.count(_ != connections._2(newRedisUri.toString))
+    numNodes == numConnections
   }
 
   private def waitingForClusterToBeReadyForNewMaster(uri: RedisURI, reshardTable: ReshardTableType,

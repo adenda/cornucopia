@@ -2,7 +2,7 @@ package com.adendamedia.cornucopia.http
 
 import akka.actor._
 import akka.util.Timeout
-import com.adendamedia.cornucopia.graph.CornucopiaActorSource
+import com.adendamedia.cornucopia.actors.Gatekeeper
 import com.adendamedia.cornucopia.redis.Connection.{Salad, newSaladAPI}
 
 object CornucopiaTaskMaster {
@@ -14,24 +14,19 @@ object CornucopiaTaskMaster {
 
 class CornucopiaTaskMaster(implicit timeout: Timeout) extends Actor with ActorLogging {
   import CornucopiaTaskMaster._
-  import com.adendamedia.cornucopia.actors.CornucopiaSource._
+  import com.adendamedia.cornucopia.actors.Gatekeeper._
 
   implicit val newSaladAPIimpl: Salad = newSaladAPI
-  val ref: ActorRef = new CornucopiaActorSource().ref
+  val ref: ActorRef = context.actorOf(Gatekeeper.props)
 
   def receive = {
     case RestTask(operation) =>
-      log.info(s"Received Cornucopia API task request: '$operation'")
-      // TODO: check if this is allowed
-      sender ! Right("its all good")
-      ref ! Task(operation, None, Some(self))
+      log.error(s"Not allowed: $operation")
+      sender ! Left("Operation not allowed")
     case RestTask2(operation, redisNodeIp) =>
       log.info(s"Received Cornucopia API task request: '$operation', '$redisNodeIp'")
-      sender ! Right("its all good")
-      ref ! Task(operation, Some(redisNodeIp), Some(self))
-    case Right(msg) =>
-      log.info(s"Received task completion: $msg")
-    case Left(msg) =>
-      log.info(s"Received task failed: $msg")
+      sender ! Right(s"Operation accepted: $operation, $redisNodeIp")
+      // TODO: handle accepted/denied messages from Gatekeeper
+      ref ! Task(operation, redisNodeIp)
   }
 }

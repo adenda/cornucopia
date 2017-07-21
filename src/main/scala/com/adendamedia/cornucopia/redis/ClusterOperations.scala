@@ -65,6 +65,9 @@ trait ClusterOperations {
                       clusterConnections: ClusterConnectionsType)
                      (implicit executionContext: ExecutionContext): Future[Unit]
 
+  def notifySlotAssignment(slot: Slot, assignedNodeId: NodeId, clusterConnections: ClusterConnectionsType)
+                          (implicit executionContext: ExecutionContext): Future[Unit]
+
 }
 
 object ClusterOperationsImpl extends ClusterOperations {
@@ -199,22 +202,17 @@ object ClusterOperationsImpl extends ClusterOperations {
   def setSlotAssignment(slot: Slot, sourceNodeId: NodeId, targetNodeId: NodeId,
                         clusterConnections: ClusterConnectionsType)
                        (implicit executionContext: ExecutionContext): Future[Unit] = {
-    val result = for {
-      sourceConn <- clusterConnections.get(sourceNodeId)
-      destinationConn <- clusterConnections.get(targetNodeId)
-    } yield {
-      (for {
-        _ <- destinationConn.clusterSetSlotImporting(slot, sourceNodeId)
-        _ <- sourceConn.clusterSetSlotMigrating(slot, targetNodeId)
-      } yield { }) recover {
-        case e => throw SetSlotAssignmentException(s"There was a problem setting slot assignment for slot $slot", e)
-      }
+
+    val sourceConn = clusterConnections(sourceNodeId)
+    val destinationConn = clusterConnections(targetNodeId)
+
+    val result = (for {
+      _ <- destinationConn.clusterSetSlotImporting(slot, sourceNodeId)
+      _ <- sourceConn.clusterSetSlotMigrating(slot, targetNodeId)
+    } yield {}) recover {
+      case e => throw SetSlotAssignmentException(s"There was a problem setting slot assignment for slot $slot", e)
     }
-    result match {
-      case Some(slotAssignment) => slotAssignment
-      case _ =>
-        throw CornucopiaRedisConnectionException("Problem getting redis connections")
-    }
+    result
   }
 
   private def getConnectionForNode(clusterConnections: ClusterConnectionsType, nodeId: NodeId)
@@ -233,14 +231,19 @@ object ClusterOperationsImpl extends ClusterOperations {
 
     import com.adendamedia.salad.serde.ByteArraySerdes._
 
-    lazy val res: Future[Unit] = (for {
-      sourceConn <- getConnectionForNode(clusterConnections, sourceNodeId)
+    val sourceConn = clusterConnections(sourceNodeId)
+
+    // get all the keys in the given slot
+    val keyList = for {
       keyCount <- sourceConn.clusterCountKeysInSlot(slot)
-      keys <- sourceConn.clusterGetKeysInSlot[CodecType](slot, keyCount.toInt)
+      keyList <- sourceConn.clusterGetKeysInSlot[CodecType](slot, keyCount.toInt)
+    } yield keyList
+
+    // migrate over all the keys in the slot from source to destination node
+    val migrate = for {
+      keys <- keyList
       result <- sourceConn.migrate[CodecType](targetRedisURI, keys.toList)
-    } yield result) recover { case e =>
-      handleFailedMigration(e)
-    }
+    } yield result
 
     def handleFailedMigration(error: Throwable): Future[Unit] = {
       val errorString = error.toString
@@ -252,13 +255,34 @@ object ClusterOperationsImpl extends ClusterOperations {
         }
       }
 
-      if (findError(errorString, "BUSYKEY")) throw MigrateSlotKeysBusyKeyException(reason = error)
-      else if (findError(errorString, "CLUSTERDOWN")) throw MigrateSlotKeysClusterDownException(reason = error)
-      else if (findError(errorString, "MOVED")) throw MigrateSlotKeysMovedException(reason = error)
-      else throw error
+      if (findError(errorString, "BUSYKEY")) {
+        throw MigrateSlotKeysBusyKeyException(reason = error)
+      }
+      else if (findError(errorString, "CLUSTERDOWN")) {
+        throw MigrateSlotKeysClusterDownException(reason = error)
+      }
+      else if (findError(errorString, "MOVED")) {
+        throw MigrateSlotKeysMovedException(reason = error)
+      }
+      else {
+        throw error
+      }
     }
 
-    res
+    migrate map  { _ =>
+      logger.info(s"Successfully migrated slot $slot from $sourceNodeId to $targetNodeId at ${targetRedisURI.getHost}:${targetRedisURI.getPort}")
+    } recoverWith { case e => handleFailedMigration(e) }
+  }
+
+  /**
+    * Notify all master nodes of a slot assignment so that they will immediately be able to redirect clients.
+    */
+  def notifySlotAssignment(slot: Slot, assignedNodeId: NodeId, clusterConnections: ClusterConnectionsType)
+                                    (implicit executionContext: ExecutionContext): Future[Unit] = {
+    val notifications  = clusterConnections.map { case (_: NodeId, connection: Salad) =>
+        connection.clusterSetSlotNode(slot, assignedNodeId)
+    }
+    Future.sequence(notifications).map(x => x)
   }
 
 }
