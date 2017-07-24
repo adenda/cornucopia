@@ -22,8 +22,8 @@ object ConfigNew {
       * The maximum number of retries to try and get cluster connections
       */
     val maxNrRetries: Int
-
     val executionContext: ExecutionContext
+    val expectedTotalNumberSlots: Int
   }
 
   trait ClusterReadyConfig {
@@ -69,6 +69,7 @@ class ConfigNew {
     object ClusterConnections extends ClusterConnectionsConfig {
       val maxNrRetries: Int = config.getInt("cluster.connections.max.retries")
       val executionContext: ExecutionContext = actorSystem.dispatcher
+      val expectedTotalNumberSlots: Int = ReshardTableConfig.ExpectedTotalNumberSlots
     }
 
     object ClusterReady extends ClusterReadyConfig {

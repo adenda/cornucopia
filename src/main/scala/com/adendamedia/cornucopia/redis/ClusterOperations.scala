@@ -46,6 +46,8 @@ trait ClusterOperations {
   def getRedisSourceNodes(targetRedisURI: RedisURI)
                          (implicit executionContext: ExecutionContext): Future[List[RedisClusterNode]]
 
+  def getRedisMasterNodes(implicit executionContext: ExecutionContext): Future[List[RedisClusterNode]]
+
   def getClusterConnections(implicit executionContext: ExecutionContext): Future[(ClusterConnectionsType, RedisUriToNodeId)]
 
   /**
@@ -135,6 +137,21 @@ object ClusterOperationsImpl extends ClusterOperations {
       logger.debug(s"Reshard cluster with new master source nodes: ${sourceNodes.map(_.getNodeId)}")
 
       sourceNodes
+    }
+  }
+
+  /**
+    * Gets a list of redis master nodes
+    * @param executionContext
+    * @return Future of a list of redis master nodes
+    */
+  def getRedisMasterNodes(implicit executionContext: ExecutionContext): Future[List[RedisClusterNode]] = {
+    val saladAPI = newSaladAPI
+
+    saladAPI.masterNodes.map { masters =>
+      val masterNodes = masters.toList
+      val liveMasters = masterNodes.filter(_.isConnected)
+      liveMasters
     }
   }
 

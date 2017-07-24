@@ -5,6 +5,9 @@ import akka.actor.{ActorRefFactory, ActorSystem}
 import com.typesafe.config.ConfigFactory
 import com.adendamedia.cornucopia.actors._
 import com.adendamedia.cornucopia.redis.ClusterOperations
+import com.adendamedia.cornucopia.redis.ClusterOperations._
+import com.adendamedia.cornucopia.redis.Connection
+import com.adendamedia.cornucopia.redis.RedisHelpers
 import com.adendamedia.cornucopia.redis.ReshardTableNew
 import com.adendamedia.cornucopia.ConfigNew.ClusterConnectionsConfig
 import org.scalatest.{BeforeAndAfterAll, MustMatchers, WordSpecLike}
@@ -31,8 +34,14 @@ class ClusterConnectionsTest extends TestKit(testSystem)
     implicit object ClusterConnectionsConfigTest extends ClusterConnectionsConfig {
       val maxNrRetries: Int = 2
       val executionContext: ExecutionContext = system.dispatcher
+      override val expectedTotalNumberSlots: Int = 42 // don't care
     }
     implicit val clusterOperations: ClusterOperations = mock[ClusterOperations]
+    implicit val redisHelpers: RedisHelpers = mock[RedisHelpers]
+
+    val dummyConnections = (Map.empty[NodeId, Connection.Salad], Map.empty[RedisUriString, NodeId])
+
+    val dummyMasters: List[RedisClusterNode] = List.empty[RedisClusterNode]
   }
 
   "ClusterConnections" must {
@@ -56,16 +65,52 @@ class ClusterConnectionsTest extends TestKit(testSystem)
       }
     }
 
-    "get the cluster connections" in new TestConfig {
-      import ClusterOperations._
-      import com.adendamedia.cornucopia.redis.Connection
+    "020 - retry if there is an error validating the connections" in new TestConfig {
+      import RedisHelpers._
 
       implicit val executionContext: ExecutionContext = ClusterConnectionsConfigTest.executionContext
 
-      val dummyConnections = (Map.empty[NodeId, Connection.Salad], Map.empty[RedisUriString, NodeId])
+      when(clusterOperations.getClusterConnections).thenReturn(
+        Future.successful(dummyConnections)
+      )
+
+      when(clusterOperations.getRedisMasterNodes).thenReturn(
+        Future.successful(dummyMasters)
+      )
+
+      when(redisHelpers.compareUsingSlotsCount(dummyMasters, dummyConnections)(ClusterConnectionsConfigTest.expectedTotalNumberSlots)).thenThrow(
+        RedisClusterConnectionsInvalidException("wat")
+      )
+
+      val props = ClusterConnectionsSupervisor.props
+      val clusterConnectionsSupervisor = TestActorRef[ClusterConnectionsSupervisor](props)
+
+      val expectedErrorMessage = "Error validating cluster connections, retrying"
+      val msg = GetClusterConnections
+
+      EventFilter.error(message = expectedErrorMessage,
+        occurrences = ClusterConnectionsConfigTest.maxNrRetries + 1) intercept {
+        clusterConnectionsSupervisor ! msg
+      }
+    }
+
+    "030 - get the cluster connections" in new TestConfig {
+      import ClusterOperations._
+      import com.adendamedia.cornucopia.redis.Connection
+      import RedisHelpers._
+
+      implicit val executionContext: ExecutionContext = ClusterConnectionsConfigTest.executionContext
 
       when(clusterOperations.getClusterConnections).thenReturn(
         Future.successful(dummyConnections)
+      )
+
+      when(clusterOperations.getRedisMasterNodes).thenReturn(
+        Future.successful(dummyMasters)
+      )
+
+      when(redisHelpers.compareUsingSlotsCount(dummyMasters, dummyConnections)(ClusterConnectionsConfigTest.expectedTotalNumberSlots)).thenReturn(
+        true
       )
 
       val props = ClusterConnectionsSupervisor.props

@@ -6,7 +6,7 @@ import com.adendamedia.cornucopia.CornucopiaException._
 import com.adendamedia.cornucopia.redis.ClusterOperations
 import com.adendamedia.cornucopia.redis.ReshardTableNew.ReshardTableType
 import com.adendamedia.cornucopia.Config
-import com.adendamedia.cornucopia.redis.ClusterOperations.RedisUriToNodeId
+import com.adendamedia.cornucopia.redis.ClusterOperations.{RedisUriToNodeId, ClusterConnectionsType}
 import com.lambdaworks.redis.RedisURI
 
 import scala.concurrent.duration._
@@ -67,6 +67,10 @@ object Overseer {
   case class JobCompleted(job: OverseerCommand)
 
   case object Reset extends OverseerCommand
+
+  case class ValidateConnections(connections: (ClusterConnectionsType, RedisUriToNodeId)) extends OverseerCommand
+  case object ClusterConnectionsValid
+  case object ClusterConnectionsInvalid
 }
 
 /**
@@ -129,7 +133,14 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
       context.become(reshardingWithNewMaster(uri))
     case slaveNodeJoined: SlaveNodeJoined =>
       log.info(s"Slave Redis node ${slaveNodeJoined.uri} successfully joined")
+      clusterConnectionsSupervisor ! GetClusterConnections
       // TODO: replicate poorest master
+  }
+
+  private def addingSlaveNode(uri: RedisURI,
+                              clusterConnections: Option[(ClusterConnectionsType, RedisUriToNodeId)] = None): Receive = {
+    case GotClusterConnections(connections) =>
+      log.info(s"Got cluster connections")
   }
 
   /**
