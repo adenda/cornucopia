@@ -70,6 +70,12 @@ class MigrateSlotsTest extends TestKit(testSystem)
     ).thenReturn(
       Future.successful()
     )
+
+    when(
+      clusterOperations.notifySlotAssignment(anyInt(), anyString(), anyObject())(anyObject())
+    ).thenReturn(
+      Future.successful()
+    )
   }
 
   "MigrateSlotWorker" must {
@@ -109,7 +115,7 @@ class MigrateSlotsTest extends TestKit(testSystem)
   }
 
   "MigrateSlotsJobManager" should {
-    "signal to supervisor once it has completed its jobs" in new SuccessTest {
+    "030 - signal to supervisor once it has completed its jobs" in new SuccessTest {
       val props = MigrateSlotsJobManager.props(migrateSlotWorkerMaker)
       val migrateSlotsJobManager = TestActorRef[MigrateSlotsJobManager](props)
       val msg = MigrateSlotsForNewMaster(redisURI, dummyConnections, testRedisUriToNodeId, reshardTableMock)
@@ -119,7 +125,6 @@ class MigrateSlotsTest extends TestKit(testSystem)
       expectMsg(JobCompleted(msg))
     }
   }
-
 
 }
 

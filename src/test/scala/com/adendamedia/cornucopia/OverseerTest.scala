@@ -36,7 +36,8 @@ class OverseerTest extends TestKit(testSystem)
 
     implicit val ec: ExecutionContext = system.dispatcher
     implicit val clusterOperations: ClusterOperations = mock[ClusterOperations]
-    val addNodeMessage: AddNode = AddMaster(redisURI)
+    val addMasterNodeMessage: AddNode = AddMaster(redisURI)
+    val addSlaveNodeMessage: AddNode = AddSlave(redisURI)
   }
 
   trait FailureTest extends Test {
@@ -79,6 +80,8 @@ class OverseerTest extends TestKit(testSystem)
     val dummyConnections: ClusterConnectionsType = Map.empty[NodeId, Connection.Salad]
 
     val reshardTableMock: ReshardTableType = Map("node1" -> List(1, 2), "node2" -> List(3,4,5), "node3" -> List(6,7))
+
+    val reshardTableMockEmpty: ReshardTableType = Map.empty[NodeId, List[Slot]]
   }
 
   "Overseer" must {
@@ -88,7 +91,7 @@ class OverseerTest extends TestKit(testSystem)
 
       EventFilter.error(message = expectedErrorMessage,
         occurrences = joinRedisNodeMaxNrRetries + 1) intercept {
-          system.eventStream.publish(addNodeMessage)
+          system.eventStream.publish(addMasterNodeMessage)
         }
     }
 
@@ -98,7 +101,7 @@ class OverseerTest extends TestKit(testSystem)
 
       EventFilter.error(message = expectedErrorMessage,
         occurrences = 1) intercept {
-        system.eventStream.publish(addNodeMessage)
+        system.eventStream.publish(addMasterNodeMessage)
       }
     }
 
@@ -107,7 +110,7 @@ class OverseerTest extends TestKit(testSystem)
 
       system.eventStream.subscribe(probe.ref, classOf[FailedAddingMasterRedisNode])
 
-      system.eventStream.publish(addNodeMessage)
+      system.eventStream.publish(addMasterNodeMessage)
 
       val msg = FailedAddingMasterRedisNode(
         s"Could not join Redis node to cluster after $joinRedisNodeMaxNrRetries retries"
@@ -153,6 +156,30 @@ class OverseerTest extends TestKit(testSystem)
       }
     }
 
+    "receive add slave node task from the message bus and tell JoinRedisNodeSupervisor actor with JoinMasterNode command" in new Test {
+      import Overseer._
+      import MessageBus._
+
+      val probe = TestProbe()
+
+      val joinRedisNodeSupervisorMaker = (f: ActorRefFactory) => probe.ref
+
+      val dummy1 = (f: ActorRefFactory) => f.actorOf(TestActors.blackholeProps)
+      val dummy2 = (f: ActorRefFactory) => f.actorOf(TestActors.blackholeProps)
+      val dummy3 = (f: ActorRefFactory) => f.actorOf(TestActors.blackholeProps)
+      val dummy4 = (f: ActorRefFactory) => f.actorOf(TestActors.blackholeProps)
+
+      val overseerProps = Overseer.props(joinRedisNodeSupervisorMaker, dummy1, dummy2, dummy3, dummy4)
+      val overseer = TestActorRef[Overseer](overseerProps)
+
+      system.eventStream.publish(addSlaveNodeMessage)
+
+      probe.expectMsgPF() {
+        case JoinSlaveNode(uri: RedisURI) =>
+          uri must be(redisURI)
+      }
+    }
+
     "tell reshard cluster supervisor to reshard with new master after master node is joined to cluster" in new Test {
       import Overseer._
 
@@ -174,11 +201,11 @@ class OverseerTest extends TestKit(testSystem)
       probe.expectMsg(ReshardWithNewMaster(redisURI))
     }
 
-    "publish to event bus when the migrate slots job has completed successfully" in new MigrateTest {
+    "020 - publish to event bus when the migrate slots job has completed successfully" in new MigrateTest {
       val probe = TestProbe()
       system.eventStream.subscribe(probe.ref, classOf[MasterNodeAdded])
 
-      val migrateMessage = MigrateSlotsForNewMaster(redisURI, dummyConnections, testRedisUriToNodeId, reshardTableMock)
+      val migrateMessage = MigrateSlotsForNewMaster(redisURI, dummyConnections, testRedisUriToNodeId, reshardTableMockEmpty)
 
       val blackHole = (f: ActorRefFactory) => f.actorOf(TestActors.blackholeProps)
 
@@ -188,7 +215,7 @@ class OverseerTest extends TestKit(testSystem)
       overseer ! AddMaster(redisURI)
       overseer ! MasterNodeJoined(redisURI)
       overseer ! GotClusterConnections(dummyConnections, testRedisUriToNodeId)
-      overseer ! GotReshardTable(reshardTableMock)
+      overseer ! GotReshardTable(reshardTableMockEmpty)
       overseer ! ClusterIsReady
       overseer ! JobCompleted(migrateMessage)
 

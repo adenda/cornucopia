@@ -151,6 +151,7 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
             context.become(waitingForClusterToBeReadyForNewMaster(uri, table, connections))
           }
           else {
+            log.warning(s"Redis connections are not valid")
             context.system.scheduler.scheduleOnce(1 seconds) {
               clusterConnectionsSupervisor ! GetClusterConnections
             }
@@ -168,6 +169,7 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
             context.become(waitingForClusterToBeReadyForNewMaster(uri, table, connections))
           }
           else {
+            log.warning(s"Redis connections are not valid")
             context.system.scheduler.scheduleOnce(1 seconds) {
               clusterConnectionsSupervisor ! GetClusterConnections
             }
@@ -198,9 +200,7 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
 
   private def migratingSlotsForNewMaster(overseerCommand: OverseerCommand): Receive = {
     case JobCompleted(job: MigrateSlotsForNewMaster) =>
-      // TODO: Publish that the new master was added successfully to cluster and resharding is complete
       log.info(s"Successfully added master node ${job.newMasterUri.toURI}")
-      migrateSlotsSupervisor ! Reset
       context.system.eventStream.publish(MasterNodeAdded(job.newMasterUri))
       context.become(acceptingCommands)
   }

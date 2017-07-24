@@ -42,13 +42,17 @@ class MigrateSlotsSupervisor(migrateSlotsWorkerMaker: (ActorRefFactory, ActorRef
 
   override def accepting: Receive = {
     case migrateCommand: MigrateSlotsForNewMaster =>
-      migrateSlotsJobManager forward migrateCommand
-      context.become(processing(migrateCommand))
+      migrateSlotsJobManager ! migrateCommand
+      context.become(processing(migrateCommand, sender))
   }
 
-  override def processing(command: OverseerCommand): Receive = {
+  override def processing(command: OverseerCommand, ref: ActorRef): Receive = {
     case Reset =>
       log.debug("Reset migrate slot supervisor")
+      context.become(accepting)
+    case msg: JobCompleted =>
+      log.debug("Job completed")
+      ref forward msg
       context.become(accepting)
   }
 
