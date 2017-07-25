@@ -42,6 +42,10 @@ object ConfigNew {
     val numberOfWorkers: Int
   }
 
+  trait ReplicatePoorestMasterConfig {
+    val executionContext: ExecutionContext
+  }
+
 }
 
 class ConfigNew {
@@ -82,6 +86,10 @@ class ConfigNew {
       val executionContext: ExecutionContext = actorSystem.dispatchers.lookup("akka.actor.migrate-slots-dispatcher")
       val maxNrRetries: Int = config.getInt("migrate.slots.max.retries")
       val numberOfWorkers: Int = config.getInt("migrate.slots.workers")
+    }
+
+    object ReplicatePoorestMaster extends ReplicatePoorestMasterConfig {
+      val executionContext: ExecutionContext = actorSystem.dispatcher
     }
 
   }

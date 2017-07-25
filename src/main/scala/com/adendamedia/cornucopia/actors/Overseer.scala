@@ -71,6 +71,8 @@ object Overseer {
   case class ValidateConnections(msg: GetClusterConnections, connections: (ClusterConnectionsType, RedisUriToNodeId)) extends OverseerCommand
   case object ClusterConnectionsValid
   case object ClusterConnectionsInvalid
+
+  case class ReplicatePoorestMasterUsingSlave(slaveUri: RedisURI)
 }
 
 /**
