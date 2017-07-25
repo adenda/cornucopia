@@ -32,6 +32,9 @@ object ClusterOperations {
   case class MigrateSlotKeysMovedException(message: String = "MOVED", reason: Throwable = None.orNull)
     extends Throwable(message, reason) with Serializable
 
+  @SerialVersionUID(1L)
+  case class ReplicateMasterException(message: String) extends Throwable(message) with Serializable
+
   type NodeId = String
   type RedisUriString = String
   type ClusterConnectionsType = Map[NodeId, Connection.Salad]
@@ -69,6 +72,27 @@ trait ClusterOperations {
 
   def notifySlotAssignment(slot: Slot, assignedNodeId: NodeId, clusterConnections: ClusterConnectionsType)
                           (implicit executionContext: ExecutionContext): Future[Unit]
+
+  /**
+    * Find the master with the fewest slaves
+    * @param executionContext The execution context
+    * @return Future containing the redis URI of the poorest master
+    */
+  def findPoorestMaster(clusterConnections: ClusterConnectionsType)
+                       (implicit executionContext: ExecutionContext): Future[NodeId]
+
+  /**
+    * Replicate the master by the slave
+    * @param newSlaveUri The Redis URI of the slave
+    * @param masterNodeId The node Id of the master to be replicated
+    * @param clusterConnections Cluster connections of master nodes
+    * @param redisUriToNodeId
+    * @param executionContext
+    * @return Future Unit on success
+    */
+  def replicateMaster(newSlaveUri: RedisURI, masterNodeId: NodeId, clusterConnections: ClusterConnectionsType,
+                      redisUriToNodeId: RedisUriToNodeId)
+                     (implicit executionContext: ExecutionContext): Future[Unit]
 
 }
 
@@ -300,6 +324,47 @@ object ClusterOperationsImpl extends ClusterOperations {
         connection.clusterSetSlotNode(slot, assignedNodeId)
     }
     Future.sequence(notifications).map(x => x)
+  }
+
+  def findPoorestMaster(clusterConnections: ClusterConnectionsType)
+                       (implicit executionContext: ExecutionContext): Future[NodeId] = {
+
+    // It might be overkill to get the slave nodes from every master connection
+    val slaveNodes = clusterConnections map { case (nodeId, connection) =>
+      connection.slaveNodes.map(_.toSet)
+    }
+
+    val slaves: Future[Set[RedisClusterNode]] =
+      Future.fold(slaveNodes)(Set.empty[RedisClusterNode])((result, t) => result ++ t)
+
+    val poorestMaster: Future[(NodeId, Int)] = slaves.map { slaveNodes =>
+      slaveNodes.toList.flatMap { slave =>
+        for {
+          master <- Option(slave.getSlaveOf)
+        } yield master
+      }
+    } map(_.groupBy(identity).mapValues(_.size)) map(_.min)
+
+    poorestMaster.map(_._1)
+  }
+
+  def replicateMaster(newSlaveUri: RedisURI, masterNodeId: NodeId, clusterConnections: ClusterConnectionsType,
+                      redisUriToNodeId: RedisUriToNodeId)
+                     (implicit executionContext: ExecutionContext): Future[Unit] = {
+
+    // Since when we join a node to the cluster it is first a master, then it should be in our collection of
+    // cluster connections
+    val newSlaveNodeId = redisUriToNodeId.getOrElse(
+      newSlaveUri.toString,
+      throw ReplicateMasterException("Could not get new Redis node Id")
+    )
+
+    val newSlaveConnection = clusterConnections.getOrElse(
+      newSlaveNodeId,
+      throw ReplicateMasterException("Could not get new Redis slave connection")
+    )
+
+    newSlaveConnection.clusterReplicate(masterNodeId)
   }
 
 }

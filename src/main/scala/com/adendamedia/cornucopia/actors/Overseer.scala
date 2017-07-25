@@ -16,10 +16,11 @@ object Overseer {
             reshardClusterSupervisorMaker: ActorRefFactory => ActorRef,
             clusterConnectionsSupervisorMaker: ActorRefFactory => ActorRef,
             clusterReadySupervisorMaker: ActorRefFactory => ActorRef,
-            migrateSlotSupervisorMaker: ActorRefFactory => ActorRef)
+            migrateSlotSupervisorMaker: ActorRefFactory => ActorRef,
+            replicatePoorestMasterSupervisorMaker: ActorRefFactory => ActorRef)
            (implicit clusterOperations: ClusterOperations): Props =
     Props(new Overseer(joinRedisNodeSupervisorMaker, reshardClusterSupervisorMaker, clusterConnectionsSupervisorMaker,
-      clusterReadySupervisorMaker, migrateSlotSupervisorMaker)
+      clusterReadySupervisorMaker, migrateSlotSupervisorMaker, replicatePoorestMasterSupervisorMaker)
     )
 
   val name = "overseer"
@@ -72,7 +73,13 @@ object Overseer {
   case object ClusterConnectionsValid
   case object ClusterConnectionsInvalid
 
-  case class ReplicatePoorestMasterUsingSlave(slaveUri: RedisURI)
+  case class ReplicatePoorestMasterUsingSlave(slaveUri: RedisURI,
+                                              connections: ClusterOperations.ClusterConnectionsType,
+                                              redisUriToNodeId: RedisUriToNodeId) extends OverseerCommand
+  case class ReplicateMaster(slaveUri: RedisURI, masterNodeId: ClusterOperations.NodeId,
+                             connections: ClusterConnectionsType, redisUriToNodeId: RedisUriToNodeId,
+                             ref: ActorRef) extends OverseerCommand
+  case class ReplicatedMaster(newSlaveUri: RedisURI)
 }
 
 /**
@@ -84,7 +91,8 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
                reshardClusterSupervisorMaker: ActorRefFactory => ActorRef,
                clusterConnectionsSupervisorMaker: ActorRefFactory => ActorRef,
                clusterReadySupervisorMaker: ActorRefFactory => ActorRef,
-               migrateSlotSupervisorMaker: ActorRefFactory => ActorRef)
+               migrateSlotSupervisorMaker: ActorRefFactory => ActorRef,
+               replicatePoorestMasterSupervisorMaker: ActorRefFactory => ActorRef)
               (implicit clusterOperations: ClusterOperations) extends Actor with ActorLogging {
   import MessageBus.{AddNode, AddMaster, AddSlave, Shutdown, FailedAddingMasterRedisNode}
   import Overseer._
@@ -97,6 +105,7 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
   val clusterConnectionsSupervisor: ActorRef = clusterConnectionsSupervisorMaker(context)
   val clusterReadySupervisor: ActorRef = clusterReadySupervisorMaker(context)
   val migrateSlotsSupervisor: ActorRef = migrateSlotSupervisorMaker(context)
+  val replicatePoorestMasterSupervisor: ActorRef = replicatePoorestMasterSupervisorMaker(context)
 
   context.system.eventStream.subscribe(self, classOf[AddNode])
   context.system.eventStream.subscribe(self, classOf[Shutdown])
@@ -136,13 +145,21 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
     case slaveNodeJoined: SlaveNodeJoined =>
       log.info(s"Slave Redis node ${slaveNodeJoined.uri} successfully joined")
       clusterConnectionsSupervisor ! GetClusterConnections(uri)
-      // TODO: replicate poorest master
+      context.become(addingSlaveNode(slaveNodeJoined.uri))
   }
 
   private def addingSlaveNode(uri: RedisURI,
                               clusterConnections: Option[(ClusterConnectionsType, RedisUriToNodeId)] = None): Receive = {
     case GotClusterConnections(connections) =>
       log.info(s"Got cluster connections")
+      val masterConnections = connections._1
+      val redisUriToNodeId = connections._2
+      replicatePoorestMasterSupervisor ! ReplicatePoorestMasterUsingSlave(uri, masterConnections, redisUriToNodeId)
+      context.become(addingSlaveNode(uri, Some(connections)))
+    case ReplicatedMaster(slaveUri) =>
+      log.info(s"Successfully replicated master node by new slave node $uri")
+      context.system.eventStream.publish(SlaveNodeAdded(slaveUri))
+      context.become(acceptingCommands)
   }
 
   /**
