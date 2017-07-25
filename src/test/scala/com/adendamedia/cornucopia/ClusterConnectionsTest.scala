@@ -42,10 +42,13 @@ class ClusterConnectionsTest extends TestKit(testSystem)
     val dummyConnections = (Map.empty[NodeId, Connection.Salad], Map.empty[RedisUriString, NodeId])
 
     val dummyMasters: List[RedisClusterNode] = List.empty[RedisClusterNode]
+
+    val uriString: String = "redis://192.168.0.100"
+    val redisURI: RedisURI = RedisURI.create(uriString)
   }
 
   "ClusterConnections" must {
-    "retry if there is an error connecting to cluster nodes" in new TestConfig {
+    "010 - retry if there is an error connecting to cluster nodes" in new TestConfig {
 
       implicit val executionContext: ExecutionContext = ClusterConnectionsConfigTest.executionContext
 
@@ -57,7 +60,7 @@ class ClusterConnectionsTest extends TestKit(testSystem)
       val clusterConnectionsSupervisor = TestActorRef[ClusterConnectionsSupervisor](props)
 
       val expectedErrorMessage = "Error getting cluster connections, retrying"
-      val msg = GetClusterConnections
+      val msg = GetClusterConnections(redisURI)
 
       EventFilter.error(message = expectedErrorMessage,
         occurrences = ClusterConnectionsConfigTest.maxNrRetries + 1) intercept {
@@ -82,11 +85,15 @@ class ClusterConnectionsTest extends TestKit(testSystem)
         RedisClusterConnectionsInvalidException("wat")
       )
 
+      when(redisHelpers.connectionsHaveRedisNode(redisURI, dummyConnections)).thenReturn(
+        true
+      )
+
       val props = ClusterConnectionsSupervisor.props
       val clusterConnectionsSupervisor = TestActorRef[ClusterConnectionsSupervisor](props)
 
       val expectedErrorMessage = "Error validating cluster connections, retrying"
-      val msg = GetClusterConnections
+      val msg = GetClusterConnections(redisURI)
 
       EventFilter.error(message = expectedErrorMessage,
         occurrences = ClusterConnectionsConfigTest.maxNrRetries + 1) intercept {
@@ -113,10 +120,14 @@ class ClusterConnectionsTest extends TestKit(testSystem)
         true
       )
 
+      when(redisHelpers.connectionsHaveRedisNode(redisURI, dummyConnections)).thenReturn(
+        true
+      )
+
       val props = ClusterConnectionsSupervisor.props
       val clusterConnectionsSupervisor = TestActorRef[ClusterConnectionsSupervisor](props)
 
-      clusterConnectionsSupervisor ! GetClusterConnections
+      clusterConnectionsSupervisor ! GetClusterConnections(redisURI)
 
       expectMsg {
         GotClusterConnections(dummyConnections)

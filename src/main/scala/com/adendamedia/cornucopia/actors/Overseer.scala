@@ -49,7 +49,7 @@ object Overseer {
   trait Reshard extends OverseerCommand
   case class ReshardWithNewMaster(uri: RedisURI) extends Reshard
 
-  case object GetClusterConnections extends OverseerCommand
+  case class GetClusterConnections(newRedisUri: RedisURI) extends OverseerCommand
   case class GotClusterConnections(connections: (ClusterOperations.ClusterConnectionsType,ClusterOperations.RedisUriToNodeId))
 
   case class GotReshardTable(reshardTable: ReshardTableType)
@@ -68,7 +68,7 @@ object Overseer {
 
   case object Reset extends OverseerCommand
 
-  case class ValidateConnections(connections: (ClusterConnectionsType, RedisUriToNodeId)) extends OverseerCommand
+  case class ValidateConnections(msg: GetClusterConnections, connections: (ClusterConnectionsType, RedisUriToNodeId)) extends OverseerCommand
   case object ClusterConnectionsValid
   case object ClusterConnectionsInvalid
 }
@@ -129,11 +129,11 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
     case masterNodeJoined: MasterNodeJoined =>
       log.info(s"Master Redis node ${masterNodeJoined.uri} successfully joined")
       reshardClusterSupervisor ! ReshardWithNewMaster(uri)
-      clusterConnectionsSupervisor ! GetClusterConnections
+      clusterConnectionsSupervisor ! GetClusterConnections(uri)
       context.become(reshardingWithNewMaster(uri))
     case slaveNodeJoined: SlaveNodeJoined =>
       log.info(s"Slave Redis node ${slaveNodeJoined.uri} successfully joined")
-      clusterConnectionsSupervisor ! GetClusterConnections
+      clusterConnectionsSupervisor ! GetClusterConnections(uri)
       // TODO: replicate poorest master
   }
 

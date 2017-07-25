@@ -18,6 +18,8 @@ object ClusterConnectionsSupervisor {
     Props(new ClusterConnectionsSupervisor)
 
   val name = "clusterConnectionsSupervisor"
+
+  case object Retry
 }
 
 class ClusterConnectionsSupervisor(implicit config: ClusterConnectionsConfig, clusterOperations: ClusterOperations,
@@ -25,6 +27,7 @@ class ClusterConnectionsSupervisor(implicit config: ClusterConnectionsConfig, cl
   extends Actor with ActorLogging {
 
   import Overseer._
+  import ClusterConnectionsSupervisor._
 
   val clusterConnectionsProps = ClusterConnections.props(self)
   val clusterConnections = context.actorOf(clusterConnectionsProps, ClusterConnections.name)
@@ -32,27 +35,29 @@ class ClusterConnectionsSupervisor(implicit config: ClusterConnectionsConfig, cl
   override def supervisorStrategy = OneForOneStrategy(config.maxNrRetries) {
     case _: FailedOverseerCommand =>
       log.error("Error getting cluster connections, retrying")
-      clusterConnections ! GetClusterConnections
+      self ! Retry
       Restart
     case _: RedisClusterConnectionsInvalidException =>
       log.error("Error validating cluster connections, retrying")
-      clusterConnections ! GetClusterConnections
+      self ! Retry
       Restart
   }
 
   override def receive: Receive = accepting
 
   private def accepting: Receive = {
-    case GetClusterConnections =>
-      clusterConnections ! GetClusterConnections
-      context.become(gettingClusterConnections(sender))
+    case get: GetClusterConnections =>
+      clusterConnections ! get
+      context.become(gettingClusterConnections(get, sender))
   }
 
-  private def gettingClusterConnections(ref: ActorRef): Receive = {
+  private def gettingClusterConnections(get: GetClusterConnections, ref: ActorRef): Receive = {
     case conns: GotClusterConnections =>
       log.info(s"Got cluster connections")
       ref forward conns
       context.become(accepting)
+    case Retry =>
+      clusterConnections ! get
   }
 
 }
@@ -63,8 +68,6 @@ object ClusterConnections {
     Props(new ClusterConnections(supervisor))
 
   val name = "clusterConnections"
-
-  case object Kill
 }
 
 class ClusterConnections(supervisor: ActorRef)
@@ -72,7 +75,6 @@ class ClusterConnections(supervisor: ActorRef)
                          redisHelpers: RedisHelpers)
   extends Actor with ActorLogging {
 
-  import ClusterConnections._
   import Overseer._
 
   val props = ValidateClusterConnections.props
@@ -83,18 +85,18 @@ class ClusterConnections(supervisor: ActorRef)
   }
 
   override def receive: Receive = {
-    case GetClusterConnections => getConnections(sender)
-    case Kill => throw FailedOverseerCommand(GetClusterConnections)
+    case get: GetClusterConnections => getConnections(get, sender)
+    case kill: KillChild => throw FailedOverseerCommand(kill.command)
     case msg: GotClusterConnections => supervisor forward msg
   }
 
-  private def getConnections(ref: ActorRef) = {
+  private def getConnections(msg: GetClusterConnections, ref: ActorRef) = {
     implicit val executionContext = config.executionContext
     clusterOperations.getClusterConnections map { connections =>
-      ValidateConnections(connections)
+      ValidateConnections(msg, connections)
     } recover {
       case e =>
-        self ! Kill
+        self ! KillChild(msg)
     } pipeTo validateClusterConnections
   }
 
@@ -112,7 +114,6 @@ class ValidateClusterConnections(implicit config: ClusterConnectionsConfig, clus
                                  redisHelpers: RedisHelpers)
   extends Actor with ActorLogging {
 
-  import ClusterConnections._
   import Overseer._
   import RedisHelpers._
 
@@ -127,8 +128,11 @@ class ValidateClusterConnections(implicit config: ClusterConnectionsConfig, clus
   private def validateConnections(v: ValidateConnections, ref: ActorRef) = {
     implicit val executionContext = config.executionContext
     implicit val expectedTotalNumberSlots: Int = config.expectedTotalNumberSlots
+    val newRedisURI = v.msg.newRedisUri // newly added redis node is a master without slot assignments
     clusterOperations.getRedisMasterNodes map { masterNodes =>
-      if (redisHelpers.compareUsingSlotsCount(masterNodes, v.connections)) GotClusterConnections(v.connections)
+      // TODO: This is ugly, and probably bad b/c it uses exceptions for flow control. Maybe there is a better way.
+      if (redisHelpers.compareUsingSlotsCount(masterNodes, v.connections) &&
+          redisHelpers.connectionsHaveRedisNode(newRedisURI, v.connections)) GotClusterConnections(v.connections)
     } recover {
       case e: RedisClusterConnectionsInvalidException =>
         self ! KillChild(v, Some(e))
