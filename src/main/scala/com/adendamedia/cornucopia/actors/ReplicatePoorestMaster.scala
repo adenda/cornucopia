@@ -30,6 +30,7 @@ class ReplicatePoorestMasterSupervisor(implicit config: ReplicatePoorestMasterCo
 
   override def accepting: Receive = {
     case msg: ReplicatePoorestMasterUsingSlave =>
+      log.info(s"Received message to replicate poorest master with redis node ${msg.slaveUri}")
       findPoorestMaster ! msg
       context.become(processing(msg, sender))
   }

@@ -105,9 +105,9 @@ class Cornucopia {
   object ReplicatePoorestMasterImpl extends ReplicatePoorestMaster {
     implicit val replicatePoorestMasterConfig: ReplicatePoorestMasterConfig = config.Cornucopia.ReplicatePoorestMaster
     implicit val clusterOperations: ClusterOperations = clusterOperationsImpl
-    val supervisorProps: Props = ReplicatePoorestMaster.props
+    val supervisorProps: Props = ReplicatePoorestMasterSupervisor.props
     val factory: ActorRefFactory => ActorRef =
-      (f: ActorRefFactory) => f.actorOf(supervisorProps, ReplicatePoorestMaster.name)
+      (f: ActorRefFactory) => f.actorOf(supervisorProps, ReplicatePoorestMasterSupervisor.name)
   }
 
   implicit val clusterOperations: ClusterOperations = clusterOperationsImpl
