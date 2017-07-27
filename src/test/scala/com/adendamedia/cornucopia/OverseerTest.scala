@@ -226,7 +226,7 @@ class OverseerTest extends TestKit(testSystem)
       probe.expectMsg(ReshardWithNewMaster(redisURI))
     }
 
-    "020 - publish to event bus when the migrate slots job has completed successfully" in new MigrateTest {
+    "020 - publish to event bus when the migrate slots job for adding a new master has completed successfully" in new MigrateTest {
       val probe = TestProbe()
       system.eventStream.subscribe(probe.ref, classOf[MasterNodeAdded])
 
@@ -245,6 +245,28 @@ class OverseerTest extends TestKit(testSystem)
       overseer ! JobCompleted(migrateMessage)
 
       val msg = MasterNodeAdded(redisURI)
+      probe.expectMsg(msg)
+    }
+
+    "021 - publish to event bus when the migrate slots job for removing a retired master has completed successfully" in new MigrateTest {
+      val probe = TestProbe()
+      system.eventStream.subscribe(probe.ref, classOf[MasterNodeRemoved])
+
+      val migrateMessage = MigrateSlotsWithoutRetiredMaster(redisURI, dummyConnections, testRedisUriToNodeId, reshardTableMockEmpty)
+
+      val blackHole = (f: ActorRefFactory) => f.actorOf(TestActors.blackholeProps)
+
+      val props = Overseer.props(blackHole, blackHole, blackHole, blackHole, blackHole, blackHole, blackHole)
+      val overseer = TestActorRef[Overseer](props)
+
+      overseer ! RemoveMaster(redisURI)
+      overseer ! FailoverComplete
+      overseer ! GotClusterConnections(dummyConnections, testRedisUriToNodeId)
+      overseer ! GotReshardTable(reshardTableMockEmpty)
+      overseer ! JobCompleted(migrateMessage)
+      overseer ! NodeForgotten
+
+      val msg = MasterNodeRemoved(redisURI)
       probe.expectMsg(msg)
     }
 

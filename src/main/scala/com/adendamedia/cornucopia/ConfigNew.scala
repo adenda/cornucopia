@@ -53,6 +53,12 @@ object ConfigNew {
     val maxNrAttemptsToVerify: Int
   }
 
+
+  trait GetSlavesOfMasterConfig {
+    val executionContext: ExecutionContext
+    val maxNrRetries: Int
+  }
+
 }
 
 class ConfigNew {

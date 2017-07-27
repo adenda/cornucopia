@@ -44,6 +44,9 @@ class MigrateSlotsSupervisor(migrateSlotsWorkerMaker: (ActorRefFactory, ActorRef
     case migrateCommand: MigrateSlotsForNewMaster =>
       migrateSlotsJobManager ! migrateCommand
       context.become(processing(migrateCommand, sender))
+    case migrateCommand: MigrateSlotsWithoutRetiredMaster =>
+      migrateSlotsJobManager ! migrateCommand
+      context.become(processing(migrateCommand, sender))
   }
 
   override def processing(command: OverseerCommand, ref: ActorRef): Receive = {
@@ -96,6 +99,23 @@ class MigrateSlotsJobManager(migrateSlotWorkerMaker: (ActorRefFactory, ActorRef)
 
   private def idle: Receive = {
     case migrateCommand: MigrateSlotsForNewMaster => doMigratingForNewMaster(migrateCommand, sender)
+    case migrateCommand: MigrateSlotsWithoutRetiredMaster => doMigratingForRetiredMaster(migrateCommand, sender)
+  }
+
+  private def doMigratingForRetiredMaster(migrateCommand: MigrateSlotsWithoutRetiredMaster, ref: ActorRef) = {
+    val targetNodeId = migrateCommand.redisUriToNodeId(migrateCommand.retiredMasterUri.toString)
+    val reshardTable = migrateCommand.reshardTable
+    val connections = migrateCommand.connections
+    val ref = sender
+
+    val pendingSlots = getMigrateJobSet(reshardTable)
+    val runningSlots: Set[(NodeId, Slot)] = Set()
+    val completedSlots: Set[(NodeId, Slot)] = Set()
+
+    val workers = List.fill(config.numberOfWorkers)(migrateSlotWorkerMaker(context, self)).toSet
+
+    context.become(migratingSlotsWithoutRetiredMaster(targetNodeId, connections, migrateCommand, workers, ref,
+      pendingSlots, runningSlots, completedSlots))
   }
 
   private def doMigratingForNewMaster(migrateCommand: MigrateSlotsForNewMaster, ref: ActorRef) = {
@@ -124,6 +144,52 @@ class MigrateSlotsJobManager(migrateSlotWorkerMaker: (ActorRefFactory, ActorRef)
       (nodeId, slots) <- table.toSet
       slot <- slots
     } yield (nodeId, slot)
+  }
+
+  /**
+    * The job manager is migrating slots until the reshard table has been processed completely
+    * @param targetNodeId The retired master node Id
+    * @param connections The cluster connections to master nodes
+    * @param cmd The Overseer command that triggered the migrate slots stage
+    * @param workers A set of workers for performing the migration
+    * @param ref The actor ref of the supervisor of the job manager
+    * @param pendingSlots Migrate slot job not assigned to any worker
+    * @param runningSlots Migrate slot job assigned but not yet complete
+    * @param completedSlots Migrate slot job completed
+    */
+  private def migratingSlotsWithoutRetiredMaster(targetNodeId: NodeId,
+                                                 connections: ClusterOperations.ClusterConnectionsType,
+                                                 cmd: MigrateSlotsWithoutRetiredMaster, workers: Set[ActorRef],
+                                                 ref: ActorRef,
+                                                 pendingSlots: Set[(NodeId, Slot)],
+                                                 runningSlots: Set[(NodeId, Slot)],
+                                                 completedSlots: Set[(NodeId, Slot)]): Receive = {
+    case GetJob =>
+      val worker = sender
+      getNextSlotToMigrate(pendingSlots) match {
+        case Some(migrateSlot) =>
+          worker ! MigrateSlotJob(migrateSlot._1, targetNodeId, migrateSlot._2, connections, Some(cmd.retiredMasterUri))
+          val updatedPendingSlots = pendingSlots - migrateSlot
+          val updatedRunningSlots = runningSlots + migrateSlot
+          val newState = migratingSlotsWithoutRetiredMaster(targetNodeId, connections, cmd, workers, ref,
+            updatedPendingSlots, updatedRunningSlots, completedSlots)
+          context.become(newState)
+        case None =>
+          // Keep workers around till we're sure all the slots
+          // have been migrated, which happens when pendingSlots AND runningSlots is empty
+          // So, in here check for if those two sets are empty, which means this worker processed the last successful
+          // message. Then if that's the case, send a PoisonPill to all workers, and change behaviour/state to idle
+          // again.
+          if (pendingSlots.isEmpty && runningSlots.isEmpty) finishJob(cmd, ref, workers)
+      }
+    case JobCompleted(job: MigrateSlotJob) =>
+      log.info(s"Successfully migrated slot ${job.slot} from ${job.sourceNodeId} to $targetNodeId")
+      val migratedSlot: MigrateSlotJobType = (job.sourceNodeId, job.slot)
+      val updatedCompletedSlots = completedSlots + migratedSlot
+      val updatedRunningSlots = runningSlots - migratedSlot
+      val newState = migratingSlotsWithoutRetiredMaster(targetNodeId, connections, cmd, workers, ref,
+        pendingSlots, updatedRunningSlots, updatedCompletedSlots)
+      context.become(newState)
   }
 
   /**
@@ -174,7 +240,7 @@ class MigrateSlotsJobManager(migrateSlotWorkerMaker: (ActorRefFactory, ActorRef)
     else pendingSlots.headOption
   }
 
-  private def finishJob(cmd: MigrateSlotsForNewMaster, ref: ActorRef, workers: Set[ActorRef]) = {
+  private def finishJob(cmd: OverseerCommand, ref: ActorRef, workers: Set[ActorRef]) = {
     workers.foreach(_ ! PoisonPill)
     ref ! JobCompleted(cmd)
     context.become(idle)

@@ -8,6 +8,7 @@ import com.adendamedia.cornucopia.redis.ReshardTableNew.ReshardTableType
 import com.adendamedia.cornucopia.Config
 import com.adendamedia.cornucopia.redis.ClusterOperations.{RedisUriToNodeId, ClusterConnectionsType}
 import com.lambdaworks.redis.RedisURI
+import com.lambdaworks.redis.cluster.models.partitions.RedisClusterNode
 
 import scala.concurrent.duration._
 
@@ -33,6 +34,10 @@ object Overseer {
     val uri: RedisURI
   }
 
+  trait NodeRemovedEvent {
+    val uri: RedisURI
+  }
+
   trait JoinNode extends OverseerCommand {
     val redisURI: RedisURI
   }
@@ -42,6 +47,9 @@ object Overseer {
 
   case class MasterNodeAdded(uri: RedisURI) extends NodeAddedEvent
   case class SlaveNodeAdded(uri: RedisURI) extends NodeAddedEvent
+
+  case class MasterNodeRemoved(uri: RedisURI) extends NodeRemovedEvent
+  case class SlaveNodeRemoved(uri: RedisURI) extends NodeRemovedEvent
 
   trait NodeJoinedEvent {
     val uri: RedisURI
@@ -103,6 +111,19 @@ object Overseer {
   case class FailoverSlave(uri: RedisURI) extends FailoverCommand
 
   case object FailoverComplete
+
+  /**
+    * Event signalling that the node asked to be forgotten was forgotten
+    */
+  case object NodeForgotten
+
+  /**
+    * Command for retrieving all the slaves of the given master
+    * @param masterUri The URI of the master to get slaves of
+    */
+  case class GetSlavesOf(masterUri: RedisURI) extends OverseerCommand
+
+  case class GotSlavesOf(masterUri: RedisURI, slaves: List[RedisClusterNode])
 }
 
 /**
@@ -192,10 +213,10 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
       }
   }
 
-  private def reshardingClusterWithoutRetiredMaster(uri: RedisURI, reshardTable: Option[ReshardTableType] = None,
-                                                    clusterConnections: Option[(ClusterConnectionsType, RedisUriToNodeId)] = None): Receive = {
-    case _ =>
-  }
+//  private def reshardingClusterWithoutRetiredMaster(uri: RedisURI, reshardTable: Option[ReshardTableType] = None,
+//                                                    clusterConnections: Option[(ClusterConnectionsType, RedisUriToNodeId)] = None): Receive = {
+//    case _ =>
+//  }
 
   private def joiningNode(uri: RedisURI): Receive = {
     case masterNodeJoined: MasterNodeJoined =>
@@ -297,7 +318,20 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
   }
 
   private def migratingSlotsWithoutRetiredMaster(overseerCommand: OverseerCommand): Receive = {
-    case _ =>
+    case JobCompleted(job: MigrateSlotsWithoutRetiredMaster) =>
+      log.info(s"Successfully resharded without retired master node ${job.retiredMasterUri.toURI}")
+      // TODO: Replicate slave(s) of the given retired master with the remaining poorest masters
+      // Will need to be done one-at-a-time as it will be necessary to find the poorest remaining master at each
+      // iteration
+      context.become(forgettingNode(overseerCommand, job.retiredMasterUri))
+  }
+
+  private def forgettingNode(overseerCommand: OverseerCommand, uri: RedisURI): Receive = {
+    case NodeForgotten =>
+      log.info(s"Successfully forgot node $uri")
+      val msg = MasterNodeRemoved(uri)
+      context.system.eventStream.publish(msg)
+      context.become(acceptingCommands)
   }
 
 }

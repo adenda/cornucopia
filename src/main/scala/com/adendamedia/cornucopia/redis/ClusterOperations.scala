@@ -102,11 +102,22 @@ trait ClusterOperations {
 
   /**
     * Find the master with the fewest slaves
+    * @param clusterConnections Cluster connections of master nodes
     * @param executionContext The execution context
     * @return Future containing the redis URI of the poorest master
     */
   def findPoorestMaster(clusterConnections: ClusterConnectionsType)
                        (implicit executionContext: ExecutionContext): Future[NodeId]
+
+  /**
+    * Find the poorest master excluding the masters in the provide excluded List
+    * @param clusterConnections Cluster connections of master nodes
+    * @param excludedMasters Master to exclude
+    * @param executionContext The execution context
+    * @return Future containing the redis URI of the poorest remaining master
+    */
+  def findPoorestRemainingMaster(clusterConnections: ClusterConnectionsType, excludedMasters: List[RedisURI])
+                                (implicit executionContext: ExecutionContext): Future[NodeId]
 
   /**
     * Replicate the master by the slave
@@ -154,6 +165,14 @@ trait ClusterOperations {
     * @return Future of boolean, true if it is correct, or false if not
     */
   def verifyFailover(uri: RedisURI, role: Role)(implicit executionContext: ExecutionContext): Future[Boolean]
+
+  /**
+    * Retrieve all the slaves of the given master
+    * @param uri The RedisURI of the master to get slaves of
+    * @param executionContext The execution context
+    * @return Future of a List of the slave cluster nodes
+    */
+  def getSlavesOfMaster(uri: RedisURI)(implicit executionContext: ExecutionContext): Future[List[RedisClusterNode]]
 
 }
 
@@ -427,6 +446,41 @@ object ClusterOperationsImpl extends ClusterOperations {
     poorestMaster.map(_._1)
   }
 
+  def findPoorestRemainingMaster(clusterConnections: ClusterConnectionsType, excludedMasters: List[RedisURI])
+                                (implicit executionContext: ExecutionContext): Future[NodeId] = {
+    // It might be overkill to get the slave nodes from every master connection
+    val slaveNodes = clusterConnections map { case (nodeId, connection) =>
+      connection.slaveNodes.map(_.toSet)
+    }
+
+    val slaves: Future[Set[RedisClusterNode]] =
+      Future.fold(slaveNodes)(Set.empty[RedisClusterNode])((result, t) => result ++ t)
+
+    val masterNodes = clusterConnections map { case (nodeId, connection) =>
+      connection.masterNodes.map(_.toSet)
+    }
+
+    val masters: Future[Set[RedisClusterNode]] =
+      Future.fold(masterNodes)(Set.empty[RedisClusterNode])((result, t) => result ++ t)
+
+    val poorestRemainingMaster: Future[(NodeId, Int)] = masters.flatMap { masterNodes =>
+
+      val excludedMasterUris: Set[RedisURI] = excludedMasters.toSet
+      val excludedMasterNodeIds: Set[NodeId] =
+        masterNodes.filter(node => excludedMasterUris.contains(node.getUri)).map(_.getNodeId)
+
+      slaves.map { slaveNodes =>
+        slaveNodes.toList.flatMap { slave =>
+          for {
+            master <- Option(slave.getSlaveOf) if !excludedMasterNodeIds.contains(master)
+          } yield master
+        }
+      } map(_.groupBy(identity).mapValues(_.size)) map(_.min)
+    }
+
+    poorestRemainingMaster.map(_._1)
+  }
+
   def replicateMaster(newSlaveUri: RedisURI, masterNodeId: NodeId, clusterConnections: ClusterConnectionsType,
                       redisUriToNodeId: RedisUriToNodeId)
                      (implicit executionContext: ExecutionContext): Future[Unit] = {
@@ -491,6 +545,18 @@ object ClusterOperationsImpl extends ClusterOperations {
     implicit val saladAPI = newSaladAPI
 
     getRole(uri) map(_ == role)
+  }
+
+  def getSlavesOfMaster(uri: RedisURI)(implicit executionContext: ExecutionContext): Future[List[RedisClusterNode]] = {
+    implicit val saladAPI = newSaladAPI
+
+    saladAPI.clusterNodes map { clusterNodes =>
+      val nodes = clusterNodes.toList
+      for {
+        master <- nodes if master.getUri == uri
+        slave <- nodes if slave.getSlaveOf == master.getNodeId
+      } yield slave
+    }
   }
 
 }
