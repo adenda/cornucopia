@@ -58,8 +58,9 @@ class OverseerTest extends TestKit(testSystem)
     val dummy2 = (f: ActorRefFactory) => f.actorOf(TestActors.blackholeProps)
     val dummy3 = (f: ActorRefFactory) => f.actorOf(TestActors.blackholeProps)
     val dummy4 = (f: ActorRefFactory) => f.actorOf(TestActors.blackholeProps)
+    val dummy5 = (f: ActorRefFactory) => f.actorOf(TestActors.blackholeProps)
 
-    val overseerProps = Overseer.props(joinRedisNodeSupervisorMaker, reshardClusterSupervisorMaker, dummy1, dummy2, dummy3, dummy4)
+    val overseerProps = Overseer.props(joinRedisNodeSupervisorMaker, reshardClusterSupervisorMaker, dummy1, dummy2, dummy3, dummy4, dummy5)
     val overseer = TestActorRef[Overseer](overseerProps)
   }
 
@@ -160,8 +161,10 @@ class OverseerTest extends TestKit(testSystem)
       val dummy2 = (f: ActorRefFactory) => f.actorOf(TestActors.blackholeProps)
       val dummy3 = (f: ActorRefFactory) => f.actorOf(TestActors.blackholeProps)
       val dummy4 = (f: ActorRefFactory) => f.actorOf(TestActors.blackholeProps)
+      val dummy5 = (f: ActorRefFactory) => f.actorOf(TestActors.blackholeProps)
 
-      val overseerProps = Overseer.props(joinRedisNodeSupervisorMaker, reshardClusterSupervisorMaker, dummy1, dummy2, dummy3, dummy4)
+      val overseerProps = Overseer.props(joinRedisNodeSupervisorMaker, reshardClusterSupervisorMaker, dummy1, dummy2,
+                                         dummy3, dummy4, dummy5)
       val overseer = TestActorRef[Overseer](overseerProps)
 
       val msg: AddNode = AddMaster(redisURI)
@@ -186,8 +189,9 @@ class OverseerTest extends TestKit(testSystem)
       val dummy3 = (f: ActorRefFactory) => f.actorOf(TestActors.blackholeProps)
       val dummy4 = (f: ActorRefFactory) => f.actorOf(TestActors.blackholeProps)
       val dummy5 = (f: ActorRefFactory) => f.actorOf(TestActors.blackholeProps)
+      val dummy6 = (f: ActorRefFactory) => f.actorOf(TestActors.blackholeProps)
 
-      val overseerProps = Overseer.props(joinRedisNodeSupervisorMaker, dummy1, dummy2, dummy3, dummy4, dummy5)
+      val overseerProps = Overseer.props(joinRedisNodeSupervisorMaker, dummy1, dummy2, dummy3, dummy4, dummy5, dummy6)
       val overseer = TestActorRef[Overseer](overseerProps)
 
       system.eventStream.publish(addSlaveNodeMessage)
@@ -210,8 +214,10 @@ class OverseerTest extends TestKit(testSystem)
       val dummy2 = (f: ActorRefFactory) => f.actorOf(TestActors.blackholeProps)
       val dummy3 = (f: ActorRefFactory) => f.actorOf(TestActors.blackholeProps)
       val dummy4 = (f: ActorRefFactory) => f.actorOf(TestActors.blackholeProps)
+      val dummy5 = (f: ActorRefFactory) => f.actorOf(TestActors.blackholeProps)
 
-      val overseerProps = Overseer.props(joinRedisNodeSupervisorMaker, reshardClusterSupervisorMaker, dummy1, dummy2, dummy3, dummy4)
+      val overseerProps = Overseer.props(joinRedisNodeSupervisorMaker, reshardClusterSupervisorMaker, dummy1, dummy2,
+                                         dummy3, dummy4, dummy5)
       val overseer = TestActorRef[Overseer](overseerProps)
 
       overseer ! AddMaster(redisURI)
@@ -228,7 +234,7 @@ class OverseerTest extends TestKit(testSystem)
 
       val blackHole = (f: ActorRefFactory) => f.actorOf(TestActors.blackholeProps)
 
-      val props = Overseer.props(blackHole, blackHole, blackHole, blackHole, blackHole, blackHole)
+      val props = Overseer.props(blackHole, blackHole, blackHole, blackHole, blackHole, blackHole, blackHole)
       val overseer = TestActorRef[Overseer](props)
 
       overseer ! AddMaster(redisURI)
@@ -250,7 +256,7 @@ class OverseerTest extends TestKit(testSystem)
 
       val blackHole = (f: ActorRefFactory) => f.actorOf(TestActors.blackholeProps)
 
-      val props = Overseer.props(blackHole, blackHole, blackHole, blackHole, blackHole, blackHole)
+      val props = Overseer.props(blackHole, blackHole, blackHole, blackHole, blackHole, blackHole, blackHole)
       val overseer = TestActorRef[Overseer](props)
 
       overseer ! AddSlave(redisURI)

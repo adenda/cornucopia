@@ -99,6 +99,13 @@ class ConfigNew {
       val executionContext: ExecutionContext = actorSystem.dispatcher
     }
 
+    object Failover extends FailoverConfig {
+      val executionContext: ExecutionContext = actorSystem.dispatcher
+      val maxNrRetries: Int = config.getInt("failover.max.retries")
+      val verificationRetryBackOffTime: Int = config.getInt("failover.verification.retry.backoff.time")
+      val maxNrAttemptsToVerify: Int = config.getInt("failover.max.attempts.to.verify")
+    }
+
   }
 
 }

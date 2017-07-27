@@ -9,7 +9,7 @@ import com.adendamedia.cornucopia.redis.{ClusterOperations, ReshardTableNew}
 import com.adendamedia.cornucopia.CornucopiaException._
 import com.adendamedia.cornucopia.ConfigNew.FailoverConfig
 import Overseer._
-import com.adendamedia.cornucopia.actors.FailoverSupervisor.{DoFailover, FailoverComplete}
+import com.adendamedia.cornucopia.actors.FailoverSupervisor.DoFailover
 
 import scala.concurrent.duration._
 import scala.concurrent.{ExecutionContext, Future}
@@ -30,8 +30,6 @@ object FailoverSupervisor {
     Props(new FailoverSupervisor)
 
   val name = "failover"
-
-  case object FailoverComplete
 
   case class DoFailover(msg: FailoverCommand, nodeRole: ClusterOperations.Role)
   case object Retry
@@ -127,7 +125,7 @@ class Failover(supervisor: ActorRef)
               (implicit config: FailoverConfig, clusterOperations: ClusterOperations) extends Actor with ActorLogging {
   import Overseer._
   import GetRole._
-  import FailoverSupervisor.{DoFailover, FailoverComplete}
+  import FailoverSupervisor.DoFailover
   import ClusterOperations.{Role, Master, Slave}
 
   private val failoverWorker: ActorRef =

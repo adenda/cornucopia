@@ -18,7 +18,7 @@ import com.lambdaworks.redis.cluster.models.partitions.RedisClusterNode
 import com.adendamedia.cornucopia.CornucopiaException._
 import org.scalatest.mockito.MockitoSugar
 import FailoverTest._
-import com.adendamedia.cornucopia.actors.FailoverSupervisor.{DoFailover, FailoverComplete}
+import com.adendamedia.cornucopia.actors.FailoverSupervisor.DoFailover
 
 class FailoverTest extends TestKit(testSystem)
   with WordSpecLike with BeforeAndAfterAll with MustMatchers with MockitoSugar with ImplicitSender {

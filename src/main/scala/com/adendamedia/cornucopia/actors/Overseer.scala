@@ -17,10 +17,12 @@ object Overseer {
             clusterConnectionsSupervisorMaker: ActorRefFactory => ActorRef,
             clusterReadySupervisorMaker: ActorRefFactory => ActorRef,
             migrateSlotSupervisorMaker: ActorRefFactory => ActorRef,
-            replicatePoorestMasterSupervisorMaker: ActorRefFactory => ActorRef)
+            replicatePoorestMasterSupervisorMaker: ActorRefFactory => ActorRef,
+            failoverSupervisorMaker: ActorRefFactory => ActorRef)
            (implicit clusterOperations: ClusterOperations): Props =
     Props(new Overseer(joinRedisNodeSupervisorMaker, reshardClusterSupervisorMaker, clusterConnectionsSupervisorMaker,
-      clusterReadySupervisorMaker, migrateSlotSupervisorMaker, replicatePoorestMasterSupervisorMaker)
+      clusterReadySupervisorMaker, migrateSlotSupervisorMaker, replicatePoorestMasterSupervisorMaker,
+      failoverSupervisorMaker)
     )
 
   val name = "overseer"
@@ -99,6 +101,8 @@ object Overseer {
     * @param uri The URI of the redis node that should become a slave if necessary
     */
   case class FailoverSlave(uri: RedisURI) extends FailoverCommand
+
+  case object FailoverComplete
 }
 
 /**
@@ -111,7 +115,8 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
                clusterConnectionsSupervisorMaker: ActorRefFactory => ActorRef,
                clusterReadySupervisorMaker: ActorRefFactory => ActorRef,
                migrateSlotSupervisorMaker: ActorRefFactory => ActorRef,
-               replicatePoorestMasterSupervisorMaker: ActorRefFactory => ActorRef)
+               replicatePoorestMasterSupervisorMaker: ActorRefFactory => ActorRef,
+               failoverSupervisorMaker: ActorRefFactory => ActorRef)
               (implicit clusterOperations: ClusterOperations) extends Actor with ActorLogging {
   import MessageBus.{AddNode, AddMaster, AddSlave, Shutdown, FailedAddingMasterRedisNode, RemoveMaster}
   import Overseer._
@@ -125,6 +130,7 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
   val clusterReadySupervisor: ActorRef = clusterReadySupervisorMaker(context)
   val migrateSlotsSupervisor: ActorRef = migrateSlotSupervisorMaker(context)
   val replicatePoorestMasterSupervisor: ActorRef = replicatePoorestMasterSupervisorMaker(context)
+  val failoverSupervisor: ActorRef = failoverSupervisorMaker(context)
 
   context.system.eventStream.subscribe(self, classOf[AddNode])
   context.system.eventStream.subscribe(self, classOf[Shutdown])
@@ -149,9 +155,16 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
       context.become(joiningNode(s.uri))
     case rm: RemoveMaster =>
       log.debug(s"Received message RemoveMaster(${rm.uri})")
-      clusterConnectionsSupervisor ! GetClusterConnections(rm.uri)
-      reshardClusterSupervisor ! ReshardWithoutRetiredMaster(rm.uri)
-      context.become(computingReshardTableForRemovingMaster(rm.uri))
+      failoverSupervisor ! rm
+      context.become(failingOverForRemovingMaster(rm.uri))
+  }
+
+  private def failingOverForRemovingMaster(uri: RedisURI): Receive = {
+    case FailoverComplete =>
+      log.info(s"Failover completed successfully, $uri is now a master node")
+      clusterConnectionsSupervisor ! GetClusterConnections(uri)
+      reshardClusterSupervisor ! ReshardWithoutRetiredMaster(uri)
+      context.become(computingReshardTableForRemovingMaster(uri))
   }
 
   private def computingReshardTableForRemovingMaster(retiredMaster: RedisURI,
@@ -161,22 +174,22 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
       log.info(s"Got cluster connections for removing retired master $retiredMaster")
       reshardTable match {
         case Some(table) =>
-          // TODO: FAILOVER
+          val cmd = MigrateSlotsWithoutRetiredMaster(retiredMaster, connections._1, connections._2, table)
+          migrateSlotsSupervisor ! cmd
+          context.become(migratingSlotsWithoutRetiredMaster(cmd))
         case None =>
           context.become(computingReshardTableForRemovingMaster(retiredMaster, Some(connections), None))
       }
     case GotReshardTable(table) =>
-      log.info(s"Got reshard table for removing retired master ${retiredMaster}")
+      log.info(s"Got reshard table for removing retired master $retiredMaster")
       clusterConnections match {
         case Some(connections) =>
-          // TODO: failover
+          val cmd = MigrateSlotsWithoutRetiredMaster(retiredMaster, connections._1, connections._2, table)
+          migrateSlotsSupervisor ! cmd
+          context.become(migratingSlotsWithoutRetiredMaster(cmd))
         case None =>
           context.become(computingReshardTableForRemovingMaster(retiredMaster, None, Some(table)))
       }
-  }
-
-  private def failingOver(uri: RedisURI): Receive = {
-    case _ =>
   }
 
   private def reshardingClusterWithoutRetiredMaster(uri: RedisURI, reshardTable: Option[ReshardTableType] = None,
@@ -281,6 +294,10 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
       log.info(s"Successfully added master node ${job.newMasterUri.toURI}")
       context.system.eventStream.publish(MasterNodeAdded(job.newMasterUri))
       context.become(acceptingCommands)
+  }
+
+  private def migratingSlotsWithoutRetiredMaster(overseerCommand: OverseerCommand): Receive = {
+    case _ =>
   }
 
 }
