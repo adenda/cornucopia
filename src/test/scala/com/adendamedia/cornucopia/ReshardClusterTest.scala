@@ -46,7 +46,7 @@ class ReshardClusterTest extends TestKit(testSystem)
   }
 
   "ReshardClusterSupervisor" must {
-    "receive the reshard table and forward it to its sender" in new ReshardTest with ReshardClusterConfigTest {
+    "010 - receive the reshard table and forward it to its sender when resharding with new master" in new ReshardTest with ReshardClusterConfigTest {
       import ReshardTableNew._
       implicit val clusterOperations: ClusterOperations = mock[ClusterOperations]
       val dummySourceNodes = List(new RedisClusterNode)
@@ -70,6 +70,39 @@ class ReshardClusterTest extends TestKit(testSystem)
       val reshardClusterSupervisor = TestActorRef[ReshardClusterSupervisor](props)
 
       reshardClusterSupervisor ! ReshardWithNewMaster(redisURI1)
+
+      expectMsg(
+        GotReshardTable(dummyReshardTable)
+      )
+    }
+  }
+
+  "ReshardClusterSupervisor" must {
+    "020 - receive the reshard table and forward it to its sender when resharding without retired master" in new ReshardTest with ReshardClusterConfigTest {
+      import ReshardTableNew._
+      implicit val clusterOperations: ClusterOperations = mock[ClusterOperations]
+      val dummyTargetNodes = List(new RedisClusterNode)
+      val dummySourceNode = new RedisClusterNode
+
+      implicit val ec: ExecutionContext = system.dispatcher
+
+      when(clusterOperations.getRedisTargetNodesAndRetiredNode(redisURI1)).thenReturn(
+        Future.successful((dummyTargetNodes, dummySourceNode))
+      )
+
+      val dummyReshardTable: ReshardTableType = Map.empty[NodeId, List[Slot]]
+
+      implicit val reshardTable: ReshardTableNew = mock[ReshardTableNew]
+      implicit val expectedTotalNumberSlots: Int = ReshardClusterConfigTest.expectedTotalNumberSlots
+      when(reshardTable.computeReshardTablePrime(dummySourceNode, dummyTargetNodes)).thenReturn(dummyReshardTable)
+
+      val computeReshardTableFactory =
+        (f: ActorRefFactory) => f.actorOf(ComputeReshardTable.props, ComputeReshardTable.name)
+
+      val props = ReshardClusterSupervisor.props(computeReshardTableFactory)
+      val reshardClusterSupervisor = TestActorRef[ReshardClusterSupervisor](props, ReshardClusterSupervisor.name)
+
+      reshardClusterSupervisor ! ReshardWithoutRetiredMaster(redisURI1)
 
       expectMsg(
         GotReshardTable(dummyReshardTable)
@@ -106,7 +139,7 @@ class ReshardClusterTest extends TestKit(testSystem)
   }
 
   "ReshardClusterSupervisor" should {
-    "Retry computing reshard table if there is an error" in new ReshardTest with ReshardClusterConfigTest {
+    "Retry computing reshard table for new master if there is an error" in new ReshardTest with ReshardClusterConfigTest {
       // NOTE: ReshardClusterSupervisor is the grand-parent of ComputeReshardTable actor, and the error is escalated
       //       from its child
       import ReshardTableNew._

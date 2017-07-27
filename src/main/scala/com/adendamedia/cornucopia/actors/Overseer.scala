@@ -49,6 +49,7 @@ object Overseer {
 
   trait Reshard extends OverseerCommand
   case class ReshardWithNewMaster(uri: RedisURI) extends Reshard
+  case class ReshardWithoutRetiredMaster(uri: RedisURI) extends Reshard
 
   case class GetClusterConnections(newRedisUri: RedisURI) extends OverseerCommand
   case class GotClusterConnections(connections: (ClusterOperations.ClusterConnectionsType,ClusterOperations.RedisUriToNodeId))
@@ -65,6 +66,10 @@ object Overseer {
                                       redisUriToNodeId: RedisUriToNodeId,
                                       reshardTable: ReshardTableType) extends OverseerCommand
 
+  case class MigrateSlotsWithoutRetiredMaster(retiredMasterUri: RedisURI, connections: ClusterOperations.ClusterConnectionsType,
+                                              redisUriToNodeId: RedisUriToNodeId,
+                                              reshardTable: ReshardTableType) extends OverseerCommand
+
   case class JobCompleted(job: OverseerCommand)
 
   case object Reset extends OverseerCommand
@@ -80,6 +85,20 @@ object Overseer {
                              connections: ClusterConnectionsType, redisUriToNodeId: RedisUriToNodeId,
                              ref: ActorRef) extends OverseerCommand
   case class ReplicatedMaster(newSlaveUri: RedisURI)
+
+  trait FailoverCommand extends OverseerCommand {
+    val uri: RedisURI
+  }
+  /**
+    * Used when removing a master
+     * @param uri The URI of the redis node that should become a master if necessary
+    */
+  case class FailoverMaster(uri: RedisURI) extends FailoverCommand
+  /**
+    * Used when removing a slave
+    * @param uri The URI of the redis node that should become a slave if necessary
+    */
+  case class FailoverSlave(uri: RedisURI) extends FailoverCommand
 }
 
 /**
@@ -94,7 +113,7 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
                migrateSlotSupervisorMaker: ActorRefFactory => ActorRef,
                replicatePoorestMasterSupervisorMaker: ActorRefFactory => ActorRef)
               (implicit clusterOperations: ClusterOperations) extends Actor with ActorLogging {
-  import MessageBus.{AddNode, AddMaster, AddSlave, Shutdown, FailedAddingMasterRedisNode}
+  import MessageBus.{AddNode, AddMaster, AddSlave, Shutdown, FailedAddingMasterRedisNode, RemoveMaster}
   import Overseer._
   import ClusterOperations.ClusterConnectionsType
 
@@ -128,12 +147,41 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
       log.debug(s"Received message AddSlave(${s.uri})")
       joinRedisNodeSupervisor ! JoinSlaveNode(s.uri)
       context.become(joiningNode(s.uri))
-//    case masterNodeAdded: MasterNodeAdded =>
-//      log.info(s"Successfully added master Redis node ${masterNodeAdded.uri} to cluster")
-//      context.system.eventStream.publish(MasterNodeAdded(masterNodeAdded.uri))
-//    case slaveNodeAdded: SlaveNodeAdded =>
-//      log.info(s"Successfully added slave Redis node ${slaveNodeAdded.uri} to cluster")
-//      context.system.eventStream.publish(SlaveNodeAdded(slaveNodeAdded.uri))
+    case rm: RemoveMaster =>
+      log.debug(s"Received message RemoveMaster(${rm.uri})")
+      clusterConnectionsSupervisor ! GetClusterConnections(rm.uri)
+      reshardClusterSupervisor ! ReshardWithoutRetiredMaster(rm.uri)
+      context.become(computingReshardTableForRemovingMaster(rm.uri))
+  }
+
+  private def computingReshardTableForRemovingMaster(retiredMaster: RedisURI,
+                                                     clusterConnections: Option[(ClusterConnectionsType, RedisUriToNodeId)] = None,
+                                                     reshardTable: Option[ReshardTableType] = None): Receive = {
+    case GotClusterConnections(connections) =>
+      log.info(s"Got cluster connections for removing retired master $retiredMaster")
+      reshardTable match {
+        case Some(table) =>
+          // TODO: FAILOVER
+        case None =>
+          context.become(computingReshardTableForRemovingMaster(retiredMaster, Some(connections), None))
+      }
+    case GotReshardTable(table) =>
+      log.info(s"Got reshard table for removing retired master ${retiredMaster}")
+      clusterConnections match {
+        case Some(connections) =>
+          // TODO: failover
+        case None =>
+          context.become(computingReshardTableForRemovingMaster(retiredMaster, None, Some(table)))
+      }
+  }
+
+  private def failingOver(uri: RedisURI): Receive = {
+    case _ =>
+  }
+
+  private def reshardingClusterWithoutRetiredMaster(uri: RedisURI, reshardTable: Option[ReshardTableType] = None,
+                                                    clusterConnections: Option[(ClusterConnectionsType, RedisUriToNodeId)] = None): Receive = {
+    case _ =>
   }
 
   private def joiningNode(uri: RedisURI): Receive = {

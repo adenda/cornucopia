@@ -46,6 +46,13 @@ object ConfigNew {
     val executionContext: ExecutionContext
   }
 
+  trait FailoverConfig {
+    val executionContext: ExecutionContext
+    val maxNrRetries: Int
+    val verificationRetryBackOffTime: Int
+    val maxNrAttemptsToVerify: Int
+  }
+
 }
 
 class ConfigNew {

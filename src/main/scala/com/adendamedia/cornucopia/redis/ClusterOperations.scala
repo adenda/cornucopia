@@ -35,10 +35,26 @@ object ClusterOperations {
   @SerialVersionUID(1L)
   case class ReplicateMasterException(message: String) extends Throwable(message) with Serializable
 
+  @SerialVersionUID(1L)
+  case class CornucopiaGetRoleException(message: String, reason: Throwable = None.orNull)
+    extends Throwable(message, reason) with Serializable
+
+  @SerialVersionUID(1L)
+  case class CornucopiaFailoverException(message: String, reason: Throwable = None.orNull)
+    extends Throwable(message, reason) with Serializable
+
+  @SerialVersionUID(1L)
+  case class CornucopiaFailoverVerificationFailedException(message: String, reason: Throwable = None.orNull)
+    extends Throwable(message, reason) with Serializable
+
   type NodeId = String
   type RedisUriString = String
   type ClusterConnectionsType = Map[NodeId, Connection.Salad]
   type RedisUriToNodeId = Map[RedisUriString, NodeId]
+
+  trait Role
+  case object Slave extends Role
+  case object Master extends Role
 }
 
 trait ClusterOperations {
@@ -48,6 +64,17 @@ trait ClusterOperations {
 
   def getRedisSourceNodes(targetRedisURI: RedisURI)
                          (implicit executionContext: ExecutionContext): Future[List[RedisClusterNode]]
+
+  /**
+    * Gets the target nodes and the retired node
+    * @param retiredRedisURI The redis URI of the node being retired
+    * @param executionContext The execution context
+    * @return Future of tuple containing a list of target redis cluster nodes receiving the hash slots from the retired
+    *         node, and the retired node
+    */
+  def getRedisTargetNodesAndRetiredNode(retiredRedisURI: RedisURI)
+                                       (implicit executionContext: ExecutionContext):
+    Future[(List[RedisClusterNode], RedisClusterNode)]
 
   def getRedisMasterNodes(implicit executionContext: ExecutionContext): Future[List[RedisClusterNode]]
 
@@ -93,6 +120,40 @@ trait ClusterOperations {
   def replicateMaster(newSlaveUri: RedisURI, masterNodeId: NodeId, clusterConnections: ClusterConnectionsType,
                       redisUriToNodeId: RedisUriToNodeId)
                      (implicit executionContext: ExecutionContext): Future[Unit]
+
+  /**
+    * Retrieves the Redis cluster role of the Redis cluster node with the given URI
+    * @param uri The uri of the Redis cluster node
+    * @return Future of the Role of the cluster node, either Master or Slave
+    */
+  def getRole(uri: RedisURI)(implicit executionContext: ExecutionContext): Future[Role]
+
+  /**
+    * Fails over the master of a slave. The provided URI must be a URI of a slave node; the failover command is run on
+    * this slave.
+    * @param uri The URI of the slave to run the command on
+    * @param executionContext The execution context
+    * @return Future unit
+    */
+  def failoverMaster(uri: RedisURI)(implicit executionContext: ExecutionContext): Future[Unit]
+
+  /**
+    * Fails over the master of a slave. The provided URI must be a URI of a master node. The slave of the given master
+    * is found, and it then the failover command is run on this slave. If the given master does not have a slave, then
+    * an exception is thrown: CornucopiaFailoverException.
+    * @param uri The uri of the master that will be failed over by its slave
+    * @param executionContext The execution context
+    * @return Future unit
+    */
+  def failoverSlave(uri: RedisURI)(implicit executionContext: ExecutionContext): Future[Unit]
+
+  /**
+    * Verify if a failover is successfull
+    * @param uri The URI of the node to check
+    * @param role The expected role of the node being checked
+    * @return Future of boolean, true if it is correct, or false if not
+    */
+  def verifyFailover(uri: RedisURI, role: Role)(implicit executionContext: ExecutionContext): Future[Boolean]
 
 }
 
@@ -161,6 +222,24 @@ object ClusterOperationsImpl extends ClusterOperations {
       logger.debug(s"Reshard cluster with new master source nodes: ${sourceNodes.map(_.getNodeId)}")
 
       sourceNodes
+    }
+  }
+
+  def getRedisTargetNodesAndRetiredNode(retiredRedisURI: RedisURI)
+                                       (implicit executionContext: ExecutionContext):
+  Future[(List[RedisClusterNode], RedisClusterNode)] = {
+    val saladAPI = newSaladAPI
+
+    saladAPI.masterNodes.map { masters =>
+      val masterNodes = masters.toList
+
+      val liveMasters = masterNodes.filter(_.isConnected)
+
+      val targetNodes = masterNodes.filterNot(_.getUri == retiredRedisURI)
+
+      val retiredNode = masterNodes.filter(_.getUri == retiredRedisURI).head
+
+      (targetNodes, retiredNode)
     }
   }
 
@@ -365,6 +444,53 @@ object ClusterOperationsImpl extends ClusterOperations {
     )
 
     newSlaveConnection.clusterReplicate(masterNodeId)
+  }
+
+  def getRole(uri: RedisURI)(implicit executionContext: ExecutionContext): Future[Role] = {
+    import com.lambdaworks.redis.models.role.RedisInstance.Role.{MASTER, SLAVE}
+    implicit val saladAPI = newSaladAPI
+
+    val result = saladAPI.clusterNodes map { nodes =>
+      for {
+        node <- nodes.toList if node.getUri == uri
+      } yield node.getRole match {
+        case MASTER => Master
+        case SLAVE => Slave
+        case other => throw CornucopiaGetRoleException(s"Invalid role: $other")
+      }
+    } recover {
+      case e: Throwable => throw CornucopiaGetRoleException(s"Something bad happened", e)
+    }
+
+    result.map(_.head)
+  }
+
+  def failoverMaster(uri: RedisURI)(implicit executionContext: ExecutionContext): Future[Unit] = {
+    implicit val saladAPI = newSaladAPI(uri)
+
+    saladAPI.clusterFailover() map identity recover {
+      case e => throw CornucopiaFailoverException(s"Could not fail over slave $uri", e)
+    }
+  }
+
+  def failoverSlave(uri: RedisURI)(implicit executionContext: ExecutionContext): Future[Unit] = {
+    implicit val saladAPI = newSaladAPI
+
+    saladAPI.clusterNodes map { nodes =>
+      val n = nodes.toList
+      val slaveUri = (for {
+        master <- n if master.getUri == uri
+        slave <- n if slave.getSlaveOf == master.getNodeId
+      } yield slave.getUri).head
+
+      failoverMaster(slaveUri)
+    }
+  }
+
+  def verifyFailover(uri: RedisURI, role: Role)(implicit executionContext: ExecutionContext): Future[Boolean] = {
+    implicit val saladAPI = newSaladAPI
+
+    getRole(uri) map(_ == role)
   }
 
 }

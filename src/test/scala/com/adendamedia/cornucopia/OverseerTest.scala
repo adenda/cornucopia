@@ -242,7 +242,7 @@ class OverseerTest extends TestKit(testSystem)
       probe.expectMsg(msg)
     }
 
-    "030 - publish to event bus when the added slave node has successfully replicate the poorest master" in new
+    "030 - publish to event bus when the added slave node has successfully replicated the poorest master" in new
         ReplicatePoorestMasterTest {
 
       val probe = TestProbe()

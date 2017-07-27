@@ -59,6 +59,10 @@ class ReshardClusterSupervisor(computeReshardTableMaker: ActorRefFactory => Acto
       log.info(s"Resharding with new master ${reshard.uri}")
       getRedisSourceNodes ! reshard
       context.become(resharding(reshard, sender))
+    case reshard: ReshardWithoutRetiredMaster =>
+      log.info(s"Resharding without retired master ${reshard.uri}")
+      getRedisSourceNodes ! reshard
+      context.become(resharding(reshard, sender))
   }
 
   private def resharding(reshard: Reshard, ref: ActorRef): Receive = {
@@ -83,6 +87,8 @@ object GetRedisSourceNodes {
   val name = "getRedisSourceNodes"
 
   case class SourceNodes(nodes: List[RedisClusterNode])
+  case class TargetNodesAndSourceNode(targetNodes: List[RedisClusterNode], sourceNode: RedisClusterNode,
+                                      retiredMasterUri: RedisURI)
 }
 
 class GetRedisSourceNodes(computeReshardTableMaker: ActorRefFactory => ActorRef)
@@ -107,12 +113,22 @@ class GetRedisSourceNodes(computeReshardTableMaker: ActorRefFactory => ActorRef)
     case reshard: ReshardWithNewMaster =>
       getRedisSourceNodes(reshard)
       context.become(gettingReshardTable(sender))
+    case reshard: ReshardWithoutRetiredMaster =>
+      getRedisTargetNodesAndRetiredNode(reshard)
+      context.become(gettingReshardTable(sender))
   }
 
   private def gettingReshardTable(ref: ActorRef): Receive = {
     case table: GotReshardTable =>
       ref ! table
       context.unbecome()
+  }
+
+  private def getRedisTargetNodesAndRetiredNode(reshard: ReshardWithoutRetiredMaster) = {
+    var uri = reshard.uri
+    clusterOperations.getRedisTargetNodesAndRetiredNode(uri) map { case (ts: List[RedisClusterNode], s: RedisClusterNode) =>
+      TargetNodesAndSourceNode(ts, s, uri)
+    } pipeTo computeReshardTable
   }
 
   private def getRedisSourceNodes(reshard: ReshardWithNewMaster) = {
@@ -141,11 +157,22 @@ class ComputeReshardTable(implicit reshardTable: ReshardTableNew, config: Reshar
     case (uri: RedisURI, sourceNodes: SourceNodes) =>
       log.info(s"Computing reshard table to add new master ${uri.toURI}")
       computeReshardTable(uri, sourceNodes, sender)
+    case TargetNodesAndSourceNode(targetNodes: List[RedisClusterNode], retiredNode: RedisClusterNode, uri: RedisURI) =>
+      val oldMasterUri = retiredNode.getUri
+      log.info(s"Computing reshard table to remove an old master $uri")
+      computeReshardTablePrime(oldMasterUri, targetNodes, retiredNode, sender)
   }
 
   def computeReshardTable(uri: RedisURI, sourceNodes: SourceNodes, ref: ActorRef) = {
     implicit val expectedTotalNumberSlots: Int = config.expectedTotalNumberSlots
     val table: ReshardTableType = reshardTable.computeReshardTable(sourceNodes.nodes)
+    ref ! GotReshardTable(table)
+  }
+
+  private def computeReshardTablePrime(oldRedisUri: RedisURI, targetNodes: List[RedisClusterNode],
+                                       retiredNode: RedisClusterNode, ref: ActorRef) = {
+    implicit val expectedTotalNumberSlots: Int = config.expectedTotalNumberSlots
+    val table: ReshardTableType = reshardTable.computeReshardTablePrime(retiredNode, targetNodes)
     ref ! GotReshardTable(table)
   }
 

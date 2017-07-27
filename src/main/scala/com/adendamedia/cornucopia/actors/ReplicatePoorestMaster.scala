@@ -90,6 +90,9 @@ class ReplicatePoorestMaster(implicit config: ReplicatePoorestMasterConfig,
   override def receive: Receive = {
     case msg: ReplicateMaster =>
       replicateMaster(msg)
+    case kill: KillChild =>
+      val e = kill.reason.getOrElse(new Exception)
+      throw e
   }
 
   private def replicateMaster(msg: ReplicateMaster) = {
