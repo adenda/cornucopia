@@ -75,6 +75,7 @@ class FindPoorestMaster(implicit config: ReplicatePoorestMasterConfig,
     val connections = msg.connections
     val excludedMasters = msg.excludedMasters
     clusterOperations.findPoorestRemainingMaster(connections, excludedMasters) map { poorestMaster =>
+      log.info(s"Found poorest remaining master to replicate: $poorestMaster")
       ReplicateMaster(msg.slaveUri, poorestMaster, connections, msg.redisUriToNodeId, supervisor)
     } recover {
       case e => self ! KillChild(msg, Some(e))
@@ -85,6 +86,7 @@ class FindPoorestMaster(implicit config: ReplicatePoorestMasterConfig,
     implicit val executionContext: ExecutionContext = config.executionContext
     val connections = msg.connections
     clusterOperations.findPoorestMaster(connections) map { poorestMaster =>
+      log.info(s"Found poorest master to replicate: $poorestMaster")
       ReplicateMaster(msg.slaveUri, poorestMaster, msg.connections, msg.redisUriToNodeId, supervisor)
     } recover {
       case e => self ! KillChild(msg, Some(e))

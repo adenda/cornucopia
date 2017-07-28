@@ -6,7 +6,7 @@ import org.scalatest.{BeforeAndAfterAll, MustMatchers, WordSpecLike}
 import com.lambdaworks.redis.RedisURI
 import com.adendamedia.cornucopia.actors._
 import com.adendamedia.cornucopia.ConfigNew.ReplicatePoorestMasterConfig
-import com.adendamedia.cornucopia.actors.Overseer.{ReplicatePoorestMasterUsingSlave, ReplicatedMaster}
+import com.adendamedia.cornucopia.actors.Overseer.{ReplicatePoorestMasterUsingSlave, ReplicatePoorestRemainingMasterUsingSlave, ReplicatedMaster}
 import com.adendamedia.cornucopia.redis.ClusterOperations
 import com.adendamedia.cornucopia.redis.ClusterOperations._
 import com.adendamedia.cornucopia.redis.Connection
@@ -39,10 +39,13 @@ class ReplicatePoorestMasterTest extends TestKit(ActorSystem("ReplicatePoorestMa
     val retiredMasterUriString: String = "redis://192.168.0.101"
     val retiredMasterRedisURI: RedisURI = RedisURI.create(retiredMasterUriString)
     val excludedMasters = List(retiredMasterRedisURI)
+
+    val slaveUriString: String = "redis://192.168.0.102"
+    val slaveRedisURI: RedisURI = RedisURI.create(slaveUriString)
   }
 
   "ReplicatePoorestMasterSupervisor" must {
-    "succesfully replicate poorest master with new slave" in new TestConfig {
+    "010 - succesfully replicate poorest master with new slave" in new TestConfig {
 
       implicit val executionContext: ExecutionContext = ReplicatePoorestMasterConfigTest.executionContext
       when(clusterOperations.findPoorestMaster(dummyConnections)).thenReturn(
@@ -65,17 +68,30 @@ class ReplicatePoorestMasterTest extends TestKit(ActorSystem("ReplicatePoorestMa
       )
     }
 
-    "successfully replicate poorest remaining master with existing slave" in new TestConfig {
+    "020 - successfully replicate poorest remaining master with existing slave" in new TestConfig {
       implicit val executionContext: ExecutionContext = ReplicatePoorestMasterConfigTest.executionContext
 
       when(clusterOperations.findPoorestRemainingMaster(dummyConnections, excludedMasters)).thenReturn(
         Future.successful(poorestMaster)
       )
 
+      when(clusterOperations.replicateMaster(slaveRedisURI, poorestMaster, dummyConnections, dummyRedisUriToNodeId)).thenReturn(
+        Future.successful()
+      )
 
+      val props = ReplicatePoorestMasterSupervisor.props
+      val replicatePoorestMasterSupervisor = TestActorRef[ReplicatePoorestMasterSupervisor](props)
+
+      val message = ReplicatePoorestRemainingMasterUsingSlave(slaveRedisURI, excludedMasters, dummyConnections,
+        dummyRedisUriToNodeId)
+
+      replicatePoorestMasterSupervisor ! message
+
+      expectMsg(
+        ReplicatedMaster(slaveRedisURI)
+      )
     }
   }
-
 
 }
 

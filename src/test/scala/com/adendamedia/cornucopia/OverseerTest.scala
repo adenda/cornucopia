@@ -254,7 +254,7 @@ class OverseerTest extends TestKit(testSystem)
       probe.expectMsg(msg)
     }
 
-    "021 - publish to event bus when the migrate slots job for removing a retired master has completed successfully" in new MigrateTest {
+    "021 - publish to event bus when removing a retired master has completed successfully" in new MigrateTest {
       val probe = TestProbe()
       system.eventStream.subscribe(probe.ref, classOf[MasterNodeRemoved])
 
