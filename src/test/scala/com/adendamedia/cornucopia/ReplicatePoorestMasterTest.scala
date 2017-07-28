@@ -34,31 +34,45 @@ class ReplicatePoorestMasterTest extends TestKit(ActorSystem("ReplicatePoorestMa
     val dummyRedisUriToNodeId = Map.empty[RedisUriString, NodeId]
 
     val uriString: String = "redis://192.168.0.100"
-    val newSlaveredisURI: RedisURI = RedisURI.create(uriString)
+    val newSlaveRedisURI: RedisURI = RedisURI.create(uriString)
+
+    val retiredMasterUriString: String = "redis://192.168.0.101"
+    val retiredMasterRedisURI: RedisURI = RedisURI.create(retiredMasterUriString)
+    val excludedMasters = List(retiredMasterRedisURI)
   }
 
   "ReplicatePoorestMasterSupervisor" must {
-    "succesfully replicate master with new slave" in new TestConfig {
+    "succesfully replicate poorest master with new slave" in new TestConfig {
 
       implicit val executionContext: ExecutionContext = ReplicatePoorestMasterConfigTest.executionContext
       when(clusterOperations.findPoorestMaster(dummyConnections)).thenReturn(
         Future.successful(poorestMaster)
       )
 
-      when(clusterOperations.replicateMaster(newSlaveredisURI, poorestMaster, dummyConnections, dummyRedisUriToNodeId)).thenReturn(
+      when(clusterOperations.replicateMaster(newSlaveRedisURI, poorestMaster, dummyConnections, dummyRedisUriToNodeId)).thenReturn(
         Future.successful()
       )
 
       val props = ReplicatePoorestMasterSupervisor.props
       val replicatePoorestMasterSupervisor = TestActorRef[ReplicatePoorestMasterSupervisor](props)
 
-      val message = ReplicatePoorestMasterUsingSlave(newSlaveredisURI, dummyConnections, dummyRedisUriToNodeId)
+      val message = ReplicatePoorestMasterUsingSlave(newSlaveRedisURI, dummyConnections, dummyRedisUriToNodeId)
 
       replicatePoorestMasterSupervisor ! message
 
       expectMsg(
-        ReplicatedMaster(newSlaveredisURI)
+        ReplicatedMaster(newSlaveRedisURI)
       )
+    }
+
+    "successfully replicate poorest remaining master with existing slave" in new TestConfig {
+      implicit val executionContext: ExecutionContext = ReplicatePoorestMasterConfigTest.executionContext
+
+      when(clusterOperations.findPoorestRemainingMaster(dummyConnections, excludedMasters)).thenReturn(
+        Future.successful(poorestMaster)
+      )
+
+
     }
   }
 

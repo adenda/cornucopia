@@ -11,6 +11,7 @@ import com.lambdaworks.redis.RedisURI
 import com.lambdaworks.redis.cluster.models.partitions.RedisClusterNode
 
 import scala.concurrent.duration._
+import scala.util.Try
 
 object Overseer {
   def props(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
@@ -19,11 +20,12 @@ object Overseer {
             clusterReadySupervisorMaker: ActorRefFactory => ActorRef,
             migrateSlotSupervisorMaker: ActorRefFactory => ActorRef,
             replicatePoorestMasterSupervisorMaker: ActorRefFactory => ActorRef,
-            failoverSupervisorMaker: ActorRefFactory => ActorRef)
+            failoverSupervisorMaker: ActorRefFactory => ActorRef,
+            getSlavesOfMasterSupervisorMaker: ActorRefFactory => ActorRef)
            (implicit clusterOperations: ClusterOperations): Props =
     Props(new Overseer(joinRedisNodeSupervisorMaker, reshardClusterSupervisorMaker, clusterConnectionsSupervisorMaker,
       clusterReadySupervisorMaker, migrateSlotSupervisorMaker, replicatePoorestMasterSupervisorMaker,
-      failoverSupervisorMaker)
+      failoverSupervisorMaker, getSlavesOfMasterSupervisorMaker)
     )
 
   val name = "overseer"
@@ -91,6 +93,10 @@ object Overseer {
   case class ReplicatePoorestMasterUsingSlave(slaveUri: RedisURI,
                                               connections: ClusterOperations.ClusterConnectionsType,
                                               redisUriToNodeId: RedisUriToNodeId) extends OverseerCommand
+  case class ReplicatePoorestRemainingMasterUsingSlave(slaveUri: RedisURI,
+                                                       excludedMasters: List[RedisURI],
+                                                       connections: ClusterOperations.ClusterConnectionsType,
+                                                       redisUriToNodeId: RedisUriToNodeId) extends OverseerCommand
   case class ReplicateMaster(slaveUri: RedisURI, masterNodeId: ClusterOperations.NodeId,
                              connections: ClusterConnectionsType, redisUriToNodeId: RedisUriToNodeId,
                              ref: ActorRef) extends OverseerCommand
@@ -137,7 +143,8 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
                clusterReadySupervisorMaker: ActorRefFactory => ActorRef,
                migrateSlotSupervisorMaker: ActorRefFactory => ActorRef,
                replicatePoorestMasterSupervisorMaker: ActorRefFactory => ActorRef,
-               failoverSupervisorMaker: ActorRefFactory => ActorRef)
+               failoverSupervisorMaker: ActorRefFactory => ActorRef,
+               getSlavesOfMasterSupervisorMaker: ActorRefFactory => ActorRef)
               (implicit clusterOperations: ClusterOperations) extends Actor with ActorLogging {
   import MessageBus.{AddNode, AddMaster, AddSlave, Shutdown, FailedAddingMasterRedisNode, RemoveMaster}
   import Overseer._
@@ -152,6 +159,7 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
   val migrateSlotsSupervisor: ActorRef = migrateSlotSupervisorMaker(context)
   val replicatePoorestMasterSupervisor: ActorRef = replicatePoorestMasterSupervisorMaker(context)
   val failoverSupervisor: ActorRef = failoverSupervisorMaker(context)
+  val getSlavesOfMasterSupervisor: ActorRef = getSlavesOfMasterSupervisorMaker(context)
 
   context.system.eventStream.subscribe(self, classOf[AddNode])
   context.system.eventStream.subscribe(self, classOf[Shutdown])
@@ -244,6 +252,7 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
       context.become(acceptingCommands)
   }
 
+
   /**
     * Computing the reshard table and getting the cluster connections is done concurrently
     * @param uri The Redis URI of the new master being added
@@ -320,10 +329,42 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
   private def migratingSlotsWithoutRetiredMaster(overseerCommand: OverseerCommand): Receive = {
     case JobCompleted(job: MigrateSlotsWithoutRetiredMaster) =>
       log.info(s"Successfully resharded without retired master node ${job.retiredMasterUri.toURI}")
-      // TODO: Replicate slave(s) of the given retired master with the remaining poorest masters
-      // Will need to be done one-at-a-time as it will be necessary to find the poorest remaining master at each
-      // iteration
-      context.become(forgettingNode(overseerCommand, job.retiredMasterUri))
+      val cmd = GetSlavesOf(job.retiredMasterUri)
+      getSlavesOfMasterSupervisor ! cmd
+      context.become(gettingSlavesOfMaster(job.retiredMasterUri, cmd, job.connections, job.redisUriToNodeId))
+  }
+
+  private def gettingSlavesOfMaster(retiredMasterUri: RedisURI, command: GetSlavesOf,
+                                    connections: ClusterConnectionsType,
+                                    redisUriToNodeId: RedisUriToNodeId): Receive = {
+    case event: GotSlavesOf =>
+      (Try(event.slaves.head) map { slave =>
+        val remainingSlaves = event.slaves.tail.map(_.getUri)
+        val excludedMaster = List(retiredMasterUri)
+        val msg = ReplicatePoorestRemainingMasterUsingSlave(slave.getUri, excludedMaster, connections, redisUriToNodeId)
+        replicatePoorestMasterSupervisor ! msg
+        Unit
+      }).getOrElse {
+        // TODO: Short-circuit to forget the node
+      }
+  }
+
+  private def replicatingPoorestRemainingMaster(slaveUri: RedisURI, remainingSlaves: List[RedisURI],
+                                                excludedMasters: List[RedisURI],
+                                                connections: ClusterConnectionsType,
+                                                redisUriToNodeId: RedisUriToNodeId): Receive = {
+    case ReplicatedMaster(uri) =>
+      log.info(s"Successfully replicated master node by new slave node $uri")
+      remainingSlaves match {
+        case x :: xs =>
+          val msg = ReplicatePoorestRemainingMasterUsingSlave(slaveUri, excludedMasters, connections, redisUriToNodeId)
+          replicatePoorestMasterSupervisor ! msg
+          context.become(
+            replicatingPoorestRemainingMaster(slaveUri, xs, excludedMasters, connections, redisUriToNodeId)
+          )
+        case Nil =>
+          // TODO: forget the node now
+      }
   }
 
   private def forgettingNode(overseerCommand: OverseerCommand, uri: RedisURI): Receive = {

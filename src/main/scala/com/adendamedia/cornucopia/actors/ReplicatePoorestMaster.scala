@@ -33,6 +33,10 @@ class ReplicatePoorestMasterSupervisor(implicit config: ReplicatePoorestMasterCo
       log.info(s"Received message to replicate poorest master with redis node ${msg.slaveUri}")
       findPoorestMaster ! msg
       context.become(processing(msg, sender))
+    case msg: ReplicatePoorestRemainingMasterUsingSlave =>
+      log.info(s"Received message to replicate poorest remaining master with slave node ${msg.slaveUri}")
+      findPoorestMaster ! msg
+      context.become(processing(msg, sender))
   }
 
   override def processing(command: OverseerCommand, ref: ActorRef): Receive = {
@@ -59,9 +63,22 @@ class FindPoorestMaster(implicit config: ReplicatePoorestMasterConfig,
   override def receive: Receive = {
     case msg: ReplicatePoorestMasterUsingSlave =>
       findPoorestMaster(msg, sender)
+    case msg: ReplicatePoorestRemainingMasterUsingSlave =>
+      findPoorestRemainingMaster(msg, sender)
     case kill: KillChild =>
       val e = kill.reason.getOrElse(new Exception)
       throw e
+  }
+
+  private def findPoorestRemainingMaster(msg: ReplicatePoorestRemainingMasterUsingSlave, supervisor: ActorRef) = {
+    implicit val executionContext: ExecutionContext = config.executionContext
+    val connections = msg.connections
+    val excludedMasters = msg.excludedMasters
+    clusterOperations.findPoorestRemainingMaster(connections, excludedMasters) map { poorestMaster =>
+      ReplicateMaster(msg.slaveUri, poorestMaster, connections, msg.redisUriToNodeId, supervisor)
+    } recover {
+      case e => self ! KillChild(msg, Some(e))
+    } pipeTo replicatePoorestMaster
   }
 
   private def findPoorestMaster(msg: ReplicatePoorestMasterUsingSlave, supervisor: ActorRef) = {

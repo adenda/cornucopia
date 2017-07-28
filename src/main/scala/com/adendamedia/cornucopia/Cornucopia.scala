@@ -48,6 +48,11 @@ object Cornucopia {
     implicit val clusterOperations: ClusterOperations
   }
 
+  trait GetSlavesOfMaster {
+    implicit val getSlavesOfMasterConfig: GetSlavesOfMasterConfig
+    implicit val clusterOperations: ClusterOperations
+  }
+
 }
 
 class Cornucopia {
@@ -123,6 +128,14 @@ class Cornucopia {
       (f: ActorRefFactory) => f.actorOf(supervisorProps, FailoverSupervisor.name)
   }
 
+  object GetSlavesOfMasterImpl extends GetSlavesOfMaster {
+    implicit val getSlavesOfMasterConfig: GetSlavesOfMasterConfig = config.Cornucopia.GetSlavesOfMaster
+    implicit val clusterOperations: ClusterOperations = clusterOperationsImpl
+    val supervisorProps: Props = GetSlavesOfMasterSupervisor.props
+    val factory: ActorRefFactory => ActorRef =
+      (f: ActorRefFactory) => f.actorOf(supervisorProps, GetSlavesOfMasterSupervisor.name)
+  }
+
   implicit val clusterOperations: ClusterOperations = clusterOperationsImpl
   val joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef = JoinRedisNodeImpl.factory
   val reshardClusterSupervisorMaker: ActorRefFactory => ActorRef = ReshardClusterImpl.factory
@@ -131,10 +144,11 @@ class Cornucopia {
   val migrateSlotsSupervisorMaker: ActorRefFactory => ActorRef = MigrateSlotsImpl.factory
   val replicatePoorestMasterSupervisorMaker: ActorRefFactory => ActorRef = ReplicatePoorestMasterImpl.factory
   val failoverSupervisorMaker: ActorRefFactory => ActorRef = FailoverImpl.factory
+  val getSlavesOfMasterSupervisorMaker: ActorRefFactory => ActorRef = GetSlavesOfMasterImpl.factory
 
   val props: Props = Overseer.props(joinRedisNodeSupervisorMaker, reshardClusterSupervisorMaker,
     clusterConnectionsSupervisorMaker, clusterReadySupervisorMaker, migrateSlotsSupervisorMaker,
-    replicatePoorestMasterSupervisorMaker, failoverSupervisorMaker)
+    replicatePoorestMasterSupervisorMaker, failoverSupervisorMaker, getSlavesOfMasterSupervisorMaker)
 
   val ref: ActorRef = system.actorOf(props, Overseer.name)
 

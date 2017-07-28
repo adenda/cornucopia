@@ -53,6 +53,10 @@ object ConfigNew {
     val maxNrAttemptsToVerify: Int
   }
 
+  trait ForgetRedisNodeConfig {
+    val executionContext: ExecutionContext
+    val maxNrRetries: Int
+  }
 
   trait GetSlavesOfMasterConfig {
     val executionContext: ExecutionContext
@@ -110,6 +114,11 @@ class ConfigNew {
       val maxNrRetries: Int = config.getInt("failover.max.retries")
       val verificationRetryBackOffTime: Int = config.getInt("failover.verification.retry.backoff.time")
       val maxNrAttemptsToVerify: Int = config.getInt("failover.max.attempts.to.verify")
+    }
+
+    object GetSlavesOfMaster extends GetSlavesOfMasterConfig {
+      val executionContext: ExecutionContext = actorSystem.dispatcher
+      val maxNrRetries: Int = config.getInt("get.slaves.of.master.max.retries")
     }
 
   }
