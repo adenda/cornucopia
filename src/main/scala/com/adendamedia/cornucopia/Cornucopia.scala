@@ -53,6 +53,11 @@ object Cornucopia {
     implicit val clusterOperations: ClusterOperations
   }
 
+  trait ForgetRedisNode {
+    implicit val forgetRedisNodeConfig: ForgetRedisNodeConfig
+    implicit val clusterOperations: ClusterOperations
+  }
+
 }
 
 class Cornucopia {
@@ -136,6 +141,14 @@ class Cornucopia {
       (f: ActorRefFactory) => f.actorOf(supervisorProps, GetSlavesOfMasterSupervisor.name)
   }
 
+  object ForgetRedisNodeImpl extends ForgetRedisNode {
+    implicit val forgetRedisNodeConfig: ForgetRedisNodeConfig = config.Cornucopia.ForgetRedisNode
+    implicit val clusterOperations: ClusterOperations = clusterOperationsImpl
+    val supervisorProps: Props = ForgetRedisNodeSupervisor.props
+    val factory: ActorRefFactory => ActorRef =
+      (f: ActorRefFactory) => f.actorOf(supervisorProps, ForgetRedisNodeSupervisor.name)
+  }
+
   implicit val clusterOperations: ClusterOperations = clusterOperationsImpl
   val joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef = JoinRedisNodeImpl.factory
   val reshardClusterSupervisorMaker: ActorRefFactory => ActorRef = ReshardClusterImpl.factory
@@ -145,10 +158,12 @@ class Cornucopia {
   val replicatePoorestMasterSupervisorMaker: ActorRefFactory => ActorRef = ReplicatePoorestMasterImpl.factory
   val failoverSupervisorMaker: ActorRefFactory => ActorRef = FailoverImpl.factory
   val getSlavesOfMasterSupervisorMaker: ActorRefFactory => ActorRef = GetSlavesOfMasterImpl.factory
+  val forgetRedisNodeSupervisorMaker: ActorRefFactory => ActorRef = ForgetRedisNodeImpl.factory
 
   val props: Props = Overseer.props(joinRedisNodeSupervisorMaker, reshardClusterSupervisorMaker,
     clusterConnectionsSupervisorMaker, clusterReadySupervisorMaker, migrateSlotsSupervisorMaker,
-    replicatePoorestMasterSupervisorMaker, failoverSupervisorMaker, getSlavesOfMasterSupervisorMaker)
+    replicatePoorestMasterSupervisorMaker, failoverSupervisorMaker, getSlavesOfMasterSupervisorMaker,
+    forgetRedisNodeSupervisorMaker)
 
   val ref: ActorRef = system.actorOf(props, Overseer.name)
 

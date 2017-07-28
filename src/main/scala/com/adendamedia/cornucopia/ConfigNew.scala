@@ -121,6 +121,11 @@ class ConfigNew {
       val maxNrRetries: Int = config.getInt("get.slaves.of.master.max.retries")
     }
 
+    object ForgetRedisNode extends ForgetRedisNodeConfig {
+      val executionContext: ExecutionContext = actorSystem.dispatcher
+      val maxNrRetries: Int = config.getInt("forget.redis.nodes.max.retries")
+    }
+
   }
 
 }
