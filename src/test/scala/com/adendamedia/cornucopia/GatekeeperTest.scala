@@ -1,7 +1,7 @@
 package com.adendamedia.cornucopia
 
-import akka.testkit.{TestKit, TestProbe}
-import akka.actor.{ActorSystem, ActorRef}
+import akka.testkit.{TestActorRef, TestKit, TestProbe}
+import akka.actor.{ActorRef, ActorSystem}
 import org.scalatest.{BeforeAndAfterAll, MustMatchers, WordSpecLike}
 import com.lambdaworks.redis.RedisURI
 import com.adendamedia.cornucopia.actors.MessageBus._
@@ -51,6 +51,25 @@ class GatekeeperTest extends TestKit(ActorSystem("GatekeeperTest"))
 
       doTask.expectMsg(msg)
     }
+
+    "publish task to remove Master" in {
+      val doTask = TestProbe()
+
+      system.eventStream.subscribe(doTask.ref, classOf[RemoveMaster])
+
+      val uriString: String = "redis://192.168.0.1"
+      val redisURI: RedisURI = RedisURI.create(uriString)
+
+      val submitTask = Task("-master", uriString)
+
+      val gatekeeper: ActorRef = TestActorRef[Gatekeeper](Gatekeeper.props)
+      gatekeeper ! submitTask
+
+      val msg = RemoveMaster(redisURI)
+
+      doTask.expectMsg(msg)
+    }
+
   }
 
 }

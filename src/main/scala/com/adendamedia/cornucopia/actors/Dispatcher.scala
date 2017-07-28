@@ -75,6 +75,8 @@ class Dispatcher extends Actor with ActorLogging {
       val msg = AddSlave(redisURI)
       context.system.eventStream.publish(msg)
     case REMOVE_MASTER       =>
+      val msg = RemoveMaster(redisURI)
+      context.system.eventStream.publish(msg)
     case REMOVE_SLAVE        =>
     case CLUSTER_TOPOLOGY    =>
     case _                   =>
