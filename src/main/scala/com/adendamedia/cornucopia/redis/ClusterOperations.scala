@@ -47,6 +47,10 @@ object ClusterOperations {
   case class CornucopiaFailoverVerificationFailedException(message: String, reason: Throwable = None.orNull)
     extends Throwable(message, reason) with Serializable
 
+  @SerialVersionUID(1L)
+  case class CornucopiaForgetNodeException(message: String, reason: Throwable = None.orNull)
+    extends Throwable(message, reason) with Serializable
+
   type NodeId = String
   type RedisUriString = String
   type ClusterConnectionsType = Map[NodeId, Connection.Salad]
@@ -124,8 +128,8 @@ trait ClusterOperations {
     * @param newSlaveUri The Redis URI of the slave
     * @param masterNodeId The node Id of the master to be replicated
     * @param clusterConnections Cluster connections of master nodes
-    * @param redisUriToNodeId
-    * @param executionContext
+    * @param redisUriToNodeId mapping of Redis URI strings to node IDs
+    * @param executionContext The execution context
     * @return Future Unit on success
     */
   def replicateMaster(newSlaveUri: RedisURI, masterNodeId: NodeId, clusterConnections: ClusterConnectionsType,
@@ -173,6 +177,17 @@ trait ClusterOperations {
     * @return Future of a List of the slave cluster nodes
     */
   def getSlavesOfMaster(uri: RedisURI)(implicit executionContext: ExecutionContext): Future[List[RedisClusterNode]]
+
+  /**
+    * Forget the redis node at the given URI
+    * @param uri The URI of the redis node to forget
+    * @param connections Cluster connections of master nodes
+    * @param redisUriToNodeId mapping of Redis URI strings to node IDs
+    * @param executionContext The execution context
+    * @return Future Unit of success
+    */
+  def forgetNode(uri: RedisURI, connections: ClusterConnectionsType, redisUriToNodeId: RedisUriToNodeId)
+                (implicit executionContext: ExecutionContext): Future[Unit]
 
 }
 
@@ -557,6 +572,27 @@ object ClusterOperationsImpl extends ClusterOperations {
         slave <- nodes if slave.getSlaveOf == master.getNodeId
       } yield slave
     }
+  }
+
+  def forgetNode(uri: RedisURI, connections: ClusterConnectionsType, redisUriToNodeId: RedisUriToNodeId)
+                (implicit executionContext: ExecutionContext): Future[Unit] = {
+
+    val nodeToRemove: (NodeId, Salad) = (for {
+      nodeId <- redisUriToNodeId.get(uri.toString)
+      connection <- connections.get(nodeId)
+    } yield nodeId -> connection).getOrElse(
+      throw CornucopiaForgetNodeException(s"Could not find the connection to redis node $uri")
+    )
+
+    val remainingNodes: List[Salad] = connections.filterKeys(_ != uri.toString).values.toList
+
+    val (removeNodeId, removeConnection) = nodeToRemove
+
+    removeConnection.clusterReset(hard = true).flatMap { _ =>
+      val results: List[Future[Unit]] = remainingNodes map(_.clusterForget(removeNodeId))
+      Future.fold(results)()((r, _) => r)
+    }
+
   }
 
 }

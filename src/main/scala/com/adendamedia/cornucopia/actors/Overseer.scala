@@ -110,6 +110,7 @@ object Overseer {
      * @param uri The URI of the redis node that should become a master if necessary
     */
   case class FailoverMaster(uri: RedisURI) extends FailoverCommand
+
   /**
     * Used when removing a slave
     * @param uri The URI of the redis node that should become a slave if necessary
@@ -119,9 +120,19 @@ object Overseer {
   case object FailoverComplete
 
   /**
-    * Event signalling that the node asked to be forgotten was forgotten
+    * All other nodes should forget this node. Either a slave node, or a master without any slaves.
+    * @param uri The URI of the node to forget from the cluster
+    * @param connections The connections to cluster master nodes
+    * @param redisUriToNodeId Mapping of Redis URI strings to Node Id's
     */
-  case object NodeForgotten
+  case class ForgetNode(uri: RedisURI, connections: ClusterConnectionsType, redisUriToNodeId: RedisUriToNodeId)
+    extends OverseerCommand
+
+  /**
+    * Event signalling that the node asked to be forgotten was forgotten
+    * @param uri The URI of the forgotten node
+    */
+  case class NodeForgotten(uri: RedisURI)
 
   /**
     * Command for retrieving all the slaves of the given master
@@ -175,15 +186,15 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
 
   private def acceptingCommands: Receive = {
     case m: AddMaster =>
-      log.debug(s"Received message AddMaster(${m.uri})")
+      log.info(s"Received message AddMaster(${m.uri})")
       joinRedisNodeSupervisor ! JoinMasterNode(m.uri)
       context.become(joiningNode(m.uri))
     case s: AddSlave =>
-      log.debug(s"Received message AddSlave(${s.uri})")
+      log.info(s"Received message AddSlave(${s.uri})")
       joinRedisNodeSupervisor ! JoinSlaveNode(s.uri)
       context.become(joiningNode(s.uri))
     case rm: RemoveMaster =>
-      log.debug(s"Received message RemoveMaster(${rm.uri})")
+      log.info(s"Received message RemoveMaster(${rm.uri})")
       failoverSupervisor ! rm
       context.become(failingOverForRemovingMaster(rm.uri))
   }
