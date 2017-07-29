@@ -301,16 +301,16 @@ object ClusterOperationsImpl extends ClusterOperations {
 
     implicit val saladAPI = newSaladAPI
 
-    val liveNodes: Future[List[RedisClusterNode]] = saladAPI.clusterNodes.map { nodes =>
-      nodes.toList.filter(_.isConnected)
+    val liveMasters: Future[List[RedisClusterNode]] = saladAPI.masterNodes.map { masters =>
+      masters.toList.filter(_.isConnected)
     }
 
     val connections: Future[List[(RedisClusterNode, Future[Connection.Salad])]] = for {
-      nodes <- liveNodes
+      masters <- liveMasters
     } yield {
       for {
-        node <- nodes
-      } yield (node, getConnection(node.getNodeId))
+        master <- masters
+      } yield (master, getConnection(master.getNodeId))
     }
 
     val result: Future[List[((NodeId, RedisUriString), Connection.Salad)]] = connections.flatMap { conns =>
