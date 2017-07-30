@@ -42,9 +42,11 @@ class MigrateSlotsSupervisor(migrateSlotsWorkerMaker: (ActorRefFactory, ActorRef
 
   override def accepting: Receive = {
     case migrateCommand: MigrateSlotsForNewMaster =>
+      log.info(s"Migrating slots for adding new master ${migrateCommand.newMasterUri}")
       migrateSlotsJobManager ! migrateCommand
       context.become(processing(migrateCommand, sender))
     case migrateCommand: MigrateSlotsWithoutRetiredMaster =>
+      log.info(s"Migrating slots without retired master ${migrateCommand.retiredMasterUri}")
       migrateSlotsJobManager ! migrateCommand
       context.become(processing(migrateCommand, sender))
   }
@@ -112,7 +114,10 @@ class MigrateSlotsJobManager(migrateSlotWorkerMaker: (ActorRefFactory, ActorRef)
     val runningSlots: Set[(NodeId, Slot)] = Set()
     val completedSlots: Set[(NodeId, Slot)] = Set()
 
-    val workers = List.fill(config.numberOfWorkers)(migrateSlotWorkerMaker(context, self)).toSet
+    val numWorkers = config.numberOfWorkers
+    log.info(s"Starting $numWorkers workers for running slot migration job")
+
+    val workers = List.fill(numWorkers)(migrateSlotWorkerMaker(context, self)).toSet
 
     context.become(migratingSlotsWithoutRetiredMaster(targetNodeId, connections, migrateCommand, workers, ref,
       pendingSlots, runningSlots, completedSlots))
@@ -270,6 +275,8 @@ class MigrateSlotWorker(jobManager: ActorRef)
 
   val setSlotAssignmentWorker: ActorRef =
     context.actorOf(SetSlotAssignmentWorker.props(self), SetSlotAssignmentWorker.name)
+
+  log.info(s"Worker at path ${self.path} is alive: I'm telling my Job manager I'm ready to start receiving jobs.")
 
   jobManager ! GetJob
 
