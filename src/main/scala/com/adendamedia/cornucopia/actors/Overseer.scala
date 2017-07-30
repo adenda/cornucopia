@@ -281,8 +281,8 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
           }
           else {
             log.warning(s"Redis connections are not valid")
-            context.system.scheduler.scheduleOnce(1 seconds) {
-              clusterConnectionsSupervisor ! GetClusterConnections
+            context.system.scheduler.scheduleOnce(2 seconds) {
+              clusterConnectionsSupervisor ! GetClusterConnections(uri)
             }
             context.become(reshardingWithNewMaster(uri, Some(table), None)) // discard invalid connections
           }
@@ -299,8 +299,8 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
           }
           else {
             log.warning(s"Redis connections are not valid")
-            context.system.scheduler.scheduleOnce(1 seconds) {
-              clusterConnectionsSupervisor ! GetClusterConnections
+            context.system.scheduler.scheduleOnce(2 seconds) {
+              clusterConnectionsSupervisor ! GetClusterConnections(uri)
             }
             context.become(reshardingWithNewMaster(uri, Some(table), None)) // discard invalid connections
           }
