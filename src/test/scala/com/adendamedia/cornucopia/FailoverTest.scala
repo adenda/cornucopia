@@ -96,25 +96,25 @@ class FailoverTest extends TestKit(testSystem)
     "Failover" must {
 
       "020 - short-circuit when failing over a master that is already a master" in new TestConfig {
-        val blackHole = TestActorRef(TestActors.blackholeProps)
-        val failover = TestActorRef[Failover](Failover.props(blackHole))
+        val probe = TestProbe()
+        val failover = TestActorRef[Failover](Failover.props(probe.ref))
         val failoverMaster = FailoverMaster(redisURI)
         val msg = DoFailover(failoverMaster, Master)
 
         failover ! msg
 
-        expectMsg(FailoverComplete)
+        probe.expectMsg(FailoverComplete)
       }
 
       "022 - short-circuit when failing over a slave that is already a slave" in new TestConfig {
-        val blackHole = TestActorRef(TestActors.blackholeProps)
-        val failover = TestActorRef[Failover](Failover.props(blackHole))
+        val probe = TestProbe()
+        val failover = TestActorRef[Failover](Failover.props(probe.ref))
         val failoverSlave = FailoverSlave(redisURI)
         val msg = DoFailover(failoverSlave, Slave)
 
         failover ! msg
 
-        expectMsg(FailoverComplete)
+        probe.expectMsg(FailoverComplete)
       }
 
       "025 - Retry failover verification when the verification fails normally" in new TestConfig {

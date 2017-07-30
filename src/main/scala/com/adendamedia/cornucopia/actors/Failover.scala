@@ -141,7 +141,7 @@ class Failover(supervisor: ActorRef)
     case DoFailover(msg: FailoverMaster, nodeRole: Role) => nodeRole match {
       case Master =>
         log.info(s"Not doing failover because the node ${msg.uri} is already a master")
-        sender ! FailoverComplete
+        supervisor ! FailoverComplete
       case Slave =>
         failoverWorker forward msg
     }
@@ -150,7 +150,7 @@ class Failover(supervisor: ActorRef)
         failoverWorker forward msg
       case Slave =>
         log.info(s"Not doing failover because the node ${msg.uri} is already a slave")
-        sender ! FailoverComplete
+        supervisor ! FailoverComplete
     }
   }
 

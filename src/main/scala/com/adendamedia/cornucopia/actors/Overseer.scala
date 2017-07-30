@@ -159,7 +159,7 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
                getSlavesOfMasterSupervisorMaker: ActorRefFactory => ActorRef,
                forgetRedisNodeSupervisorMaker: ActorRefFactory => ActorRef)
               (implicit clusterOperations: ClusterOperations) extends Actor with ActorLogging {
-  import MessageBus.{AddNode, AddMaster, AddSlave, Shutdown, FailedAddingMasterRedisNode, RemoveMaster}
+  import MessageBus.{AddNode, AddMaster, AddSlave, Shutdown, FailedAddingMasterRedisNode, RemoveNode, RemoveMaster}
   import Overseer._
   import ClusterOperations.ClusterConnectionsType
 
@@ -176,6 +176,7 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
   val forgetRedisNodeSupervisor: ActorRef = forgetRedisNodeSupervisorMaker(context)
 
   context.system.eventStream.subscribe(self, classOf[AddNode])
+  context.system.eventStream.subscribe(self, classOf[RemoveNode])
   context.system.eventStream.subscribe(self, classOf[Shutdown])
 
   override def supervisorStrategy = OneForOneStrategy() {
@@ -198,7 +199,8 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
       context.become(joiningNode(s.uri))
     case rm: RemoveMaster =>
       log.info(s"Received message RemoveMaster(${rm.uri})")
-      failoverSupervisor ! rm
+      val msg = FailoverMaster(rm.uri)
+      failoverSupervisor ! msg
       context.become(failingOverForRemovingMaster(rm.uri))
   }
 
