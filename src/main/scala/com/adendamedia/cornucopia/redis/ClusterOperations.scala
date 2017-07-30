@@ -8,7 +8,7 @@ import com.lambdaworks.redis.cluster.models.partitions.RedisClusterNode
 import com.adendamedia.salad.SaladClusterAPI
 
 import scala.concurrent.{ExecutionContext, Future, blocking}
-import com.lambdaworks.redis.{RedisException, RedisURI}
+import com.lambdaworks.redis.{RedisCommandExecutionException, RedisException, RedisURI}
 
 object ClusterOperations {
 
@@ -584,13 +584,14 @@ object ClusterOperationsImpl extends ClusterOperations {
       throw CornucopiaForgetNodeException(s"Could not find the connection to redis node $uri")
     )
 
-    val remainingNodes: List[Salad] = connections.filterKeys(_ != uri.toString).values.toList
-
     val (removeNodeId, removeConnection) = nodeToRemove
+    val remainingNodes: List[Salad] = connections.filterKeys(_ != removeNodeId).values.toList
 
     removeConnection.clusterReset(hard = true).flatMap { _ =>
       val results: List[Future[Unit]] = remainingNodes map(_.clusterForget(removeNodeId))
       Future.fold(results)()((r, _) => r)
+    } recover {
+      case e: RedisCommandExecutionException => throw e // This isn't likely to happen
     }
 
   }

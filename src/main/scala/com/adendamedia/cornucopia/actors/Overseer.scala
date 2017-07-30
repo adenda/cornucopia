@@ -349,6 +349,13 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
                                     redisUriToNodeId: RedisUriToNodeId): Receive = {
     case event: GotSlavesOf =>
       log.info(s"Got slaves of retired master $retiredMasterUri: ${event.slaves.map(_.getUri.toURI)}")
+
+      if (event.slaves.isEmpty) {
+        val cmd = ForgetNode(retiredMasterUri, connections, redisUriToNodeId)
+        forgetRedisNodeSupervisor ! cmd
+        context.become(forgettingNode(cmd, retiredMasterUri))
+      }
+
       val excludedMaster = List(retiredMasterUri)
       event.slaves foreach { slave =>
         val msg = ReplicatePoorestRemainingMasterUsingSlave(slave.getUri, excludedMaster, connections, redisUriToNodeId)

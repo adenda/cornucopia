@@ -185,11 +185,12 @@ class MigrateSlotsJobManager(migrateSlotWorkerMaker: (ActorRefFactory, ActorRef)
           // So, in here check for if those two sets are empty, which means this worker processed the last successful
           // message. Then if that's the case, send a PoisonPill to all workers, and change behaviour/state to idle
           // again.
+          log.info(s"No more jobs left")
           if (pendingSlots.isEmpty && runningSlots.isEmpty) finishJob(cmd, ref, workers)
       }
     case JobCompleted(job: MigrateSlotJob) =>
       log.info(s"Successfully migrated slot ${job.slot} from ${job.sourceNodeId} to $retiredNodeId")
-      val migratedSlot: MigrateSlotJobType = (job.sourceNodeId, job.slot)
+      val migratedSlot: MigrateSlotJobType = (job.targetNodeId, job.slot)
       val updatedCompletedSlots = completedSlots + migratedSlot
       val updatedRunningSlots = runningSlots - migratedSlot
       val newState = migratingSlotsWithoutRetiredMaster(retiredNodeId, connections, cmd, workers, ref,
@@ -228,6 +229,7 @@ class MigrateSlotsJobManager(migrateSlotWorkerMaker: (ActorRefFactory, ActorRef)
           // So, in here check for if those two sets are empty, which means this worker processed the last successful
           // message. Then if that's the case, send a PoisonPill to all workers, and change behaviour/state to idle
           // again.
+          log.info(s"No more jobs left")
           if (pendingSlots.isEmpty && runningSlots.isEmpty) finishJob(cmd, ref, workers)
       }
     case JobCompleted(job: MigrateSlotJob) =>
@@ -246,6 +248,7 @@ class MigrateSlotsJobManager(migrateSlotWorkerMaker: (ActorRefFactory, ActorRef)
   }
 
   private def finishJob(cmd: OverseerCommand, ref: ActorRef, workers: Set[ActorRef]) = {
+    log.info(s"All jobs have completed, sending poison pill to all workers")
     workers.foreach(_ ! PoisonPill)
     ref ! JobCompleted(cmd)
     context.become(idle)
