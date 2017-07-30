@@ -153,7 +153,7 @@ class MigrateSlotsJobManager(migrateSlotWorkerMaker: (ActorRefFactory, ActorRef)
 
   /**
     * The job manager is migrating slots until the reshard table has been processed completely
-    * @param targetNodeId The retired master node Id
+    * @param retiredNodeId The retired master node Id
     * @param connections The cluster connections to master nodes
     * @param cmd The Overseer command that triggered the migrate slots stage
     * @param workers A set of workers for performing the migration
@@ -162,7 +162,7 @@ class MigrateSlotsJobManager(migrateSlotWorkerMaker: (ActorRefFactory, ActorRef)
     * @param runningSlots Migrate slot job assigned but not yet complete
     * @param completedSlots Migrate slot job completed
     */
-  private def migratingSlotsWithoutRetiredMaster(targetNodeId: NodeId,
+  private def migratingSlotsWithoutRetiredMaster(retiredNodeId: NodeId,
                                                  connections: ClusterOperations.ClusterConnectionsType,
                                                  cmd: MigrateSlotsWithoutRetiredMaster, workers: Set[ActorRef],
                                                  ref: ActorRef,
@@ -173,10 +173,10 @@ class MigrateSlotsJobManager(migrateSlotWorkerMaker: (ActorRefFactory, ActorRef)
       val worker = sender
       getNextSlotToMigrate(pendingSlots) match {
         case Some(migrateSlot) =>
-          worker ! MigrateSlotJob(migrateSlot._1, targetNodeId, migrateSlot._2, connections, Some(cmd.retiredMasterUri))
+          worker ! MigrateSlotJob(retiredNodeId, migrateSlot._1, migrateSlot._2, connections, Some(cmd.retiredMasterUri))
           val updatedPendingSlots = pendingSlots - migrateSlot
           val updatedRunningSlots = runningSlots + migrateSlot
-          val newState = migratingSlotsWithoutRetiredMaster(targetNodeId, connections, cmd, workers, ref,
+          val newState = migratingSlotsWithoutRetiredMaster(retiredNodeId, connections, cmd, workers, ref,
             updatedPendingSlots, updatedRunningSlots, completedSlots)
           context.become(newState)
         case None =>
@@ -188,11 +188,11 @@ class MigrateSlotsJobManager(migrateSlotWorkerMaker: (ActorRefFactory, ActorRef)
           if (pendingSlots.isEmpty && runningSlots.isEmpty) finishJob(cmd, ref, workers)
       }
     case JobCompleted(job: MigrateSlotJob) =>
-      log.info(s"Successfully migrated slot ${job.slot} from ${job.sourceNodeId} to $targetNodeId")
+      log.info(s"Successfully migrated slot ${job.slot} from ${job.sourceNodeId} to $retiredNodeId")
       val migratedSlot: MigrateSlotJobType = (job.sourceNodeId, job.slot)
       val updatedCompletedSlots = completedSlots + migratedSlot
       val updatedRunningSlots = runningSlots - migratedSlot
-      val newState = migratingSlotsWithoutRetiredMaster(targetNodeId, connections, cmd, workers, ref,
+      val newState = migratingSlotsWithoutRetiredMaster(retiredNodeId, connections, cmd, workers, ref,
         pendingSlots, updatedRunningSlots, updatedCompletedSlots)
       context.become(newState)
   }
