@@ -17,7 +17,7 @@ object ReplicatePoorestMasterSupervisor {
   def props(implicit config: ReplicatePoorestMasterConfig,
             clusterOperations: ClusterOperations): Props = Props(new ReplicatePoorestMasterSupervisor)
 
-  val name = "replicatePoorestMasterConfig"
+  val name = "replicatePoorestMasterSupervisor"
 }
 
 class ReplicatePoorestMasterSupervisor(implicit config: ReplicatePoorestMasterConfig,

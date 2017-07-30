@@ -189,7 +189,7 @@ class MigrateSlotsJobManager(migrateSlotWorkerMaker: (ActorRefFactory, ActorRef)
           if (pendingSlots.isEmpty && runningSlots.isEmpty) finishJob(cmd, ref, workers)
       }
     case JobCompleted(job: MigrateSlotJob) =>
-      log.info(s"Successfully migrated slot ${job.slot} from ${job.sourceNodeId} to $retiredNodeId")
+      log.info(s"Successfully migrated slot ${job.slot} from $retiredNodeId to ${job.targetNodeId}")
       val migratedSlot: MigrateSlotJobType = (job.targetNodeId, job.slot)
       val updatedCompletedSlots = completedSlots + migratedSlot
       val updatedRunningSlots = runningSlots - migratedSlot
