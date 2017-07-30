@@ -39,6 +39,13 @@ class ReshardTest extends TestKit(ActorSystem("ReshardTest"))
       "c" -> List(13)
     )
 
+    val clusterNodesPrime = List(node1, node2)
+
+    val expectedReshardTablePrime: ReshardTableType = Map(
+      "a" -> List(13,14,15),
+      "b" -> List(16,17)
+    )
+
   }
 
   trait ReshardDebug {
@@ -60,9 +67,7 @@ class ReshardTest extends TestKit(ActorSystem("ReshardTest"))
 
       assert(reshardTable == expectedReshardTable)
     }
-  }
 
-  "Reshard cluster with new master" must {
     "throw a ReshardTableException if the expected total number of slots does not match the actual number of slots" in new ReshardTableTest {
 
       final implicit val ExpectedTotalNumberSlots: Int = 1234
@@ -77,6 +82,19 @@ class ReshardTest extends TestKit(ActorSystem("ReshardTest"))
 
     }
   }
+
+  "Reshard cluster without retired master" must {
+    "calculate reshard table correctly" in new ReshardTableTest {
+
+      final implicit val ExpectedTotalNumberSlots: Int = 17
+      val reshardTable: ReshardTableType = computeReshardTablePrime(node3, clusterNodesPrime)
+
+      assert(reshardTable == expectedReshardTablePrime)
+    }
+
+  }
+
+
 
 //  "Debugging" must {
 //    "be fun" ignore new ReshardDebug {
