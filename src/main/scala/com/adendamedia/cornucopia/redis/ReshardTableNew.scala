@@ -132,7 +132,7 @@ object ReshardTableNewImpl extends ReshardTableNew {
     def computeReshardTable(tbl: ReshardTableType, remainingSourceSlots: List[Int], i: Int): ReshardTableType = {
       if (remainingSourceSlots.isEmpty) tbl
       else {
-        val numSlots = computeNumSlots(i)
+        val numSlots = if (i + 1 == sortedTargets.size) remainingSourceSlots.size else computeNumSlots(i)
         val slots = remainingSourceSlots.take(numSlots)
         val slotsRemaining = remainingSourceSlots.drop(numSlots)
         val targetNodeId = sortedTargets(i).node.getNodeId
