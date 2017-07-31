@@ -51,6 +51,7 @@ object ConfigNew {
     val maxNrRetries: Int
     val verificationRetryBackOffTime: Int
     val maxNrAttemptsToVerify: Int
+    val refreshTimeout: Int
   }
 
   trait ForgetRedisNodeConfig {
@@ -114,6 +115,7 @@ class ConfigNew {
       val maxNrRetries: Int = config.getInt("failover.max.retries")
       val verificationRetryBackOffTime: Int = config.getInt("failover.verification.retry.backoff.time")
       val maxNrAttemptsToVerify: Int = config.getInt("failover.max.attempts.to.verify")
+      val refreshTimeout: Int = config.getInt("failover.refresh.timeout")
     }
 
     object GetSlavesOfMaster extends GetSlavesOfMasterConfig {

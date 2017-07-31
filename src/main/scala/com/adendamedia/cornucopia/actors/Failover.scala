@@ -58,8 +58,11 @@ class FailoverSupervisor(implicit config: FailoverConfig, clusterOperations: Clu
 
   protected def processing(command: OverseerCommand, ref: ActorRef): Receive = {
     case FailoverComplete =>
-      ref forward FailoverComplete
-      context.unbecome()
+      implicit val executionContext: ExecutionContext = config.executionContext
+      context.system.scheduler.scheduleOnce(config.refreshTimeout.seconds) {
+        ref forward FailoverComplete
+        context.unbecome()
+      }
     case Retry => getRole ! command
   }
 

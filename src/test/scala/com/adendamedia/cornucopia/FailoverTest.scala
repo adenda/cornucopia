@@ -37,6 +37,7 @@ class FailoverTest extends TestKit(testSystem)
       val executionContext: ExecutionContext = system.dispatcher
       val verificationRetryBackOffTime: Int = 1
       val maxNrAttemptsToVerify: Int = 1
+      override val refreshTimeout: Int = 0
     }
     implicit val clusterOperations: ClusterOperations = mock[ClusterOperations]
     val uriString: String = "redis://192.168.0.100"
