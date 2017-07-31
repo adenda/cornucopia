@@ -10,6 +10,8 @@ object CornucopiaTaskMaster {
 
   case class RestTask(operation: String)
   case class RestTask2(operation: String, redisNodeIp: String)
+
+  val name = "cornucopiaTaskMaster"
 }
 
 class CornucopiaTaskMaster(implicit timeout: Timeout) extends Actor with ActorLogging {
@@ -17,7 +19,7 @@ class CornucopiaTaskMaster(implicit timeout: Timeout) extends Actor with ActorLo
   import com.adendamedia.cornucopia.actors.Gatekeeper._
 
   implicit val newSaladAPIimpl: Salad = newSaladAPI
-  val ref: ActorRef = context.actorOf(Gatekeeper.props)
+  val ref: ActorRef = context.actorOf(Gatekeeper.props, Gatekeeper.name)
 
   def receive = {
     case RestTask(operation) =>

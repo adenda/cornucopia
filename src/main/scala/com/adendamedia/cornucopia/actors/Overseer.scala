@@ -33,26 +33,12 @@ object Overseer {
 
   trait OverseerCommand
 
-  trait NodeAddedEvent {
-    val uri: RedisURI
-  }
-
-  trait NodeRemovedEvent {
-    val uri: RedisURI
-  }
-
   trait JoinNode extends OverseerCommand {
     val redisURI: RedisURI
   }
 
   case class JoinMasterNode(redisURI: RedisURI) extends JoinNode
   case class JoinSlaveNode(redisURI: RedisURI) extends JoinNode
-
-  case class MasterNodeAdded(uri: RedisURI) extends NodeAddedEvent
-  case class SlaveNodeAdded(uri: RedisURI) extends NodeAddedEvent
-
-  case class MasterNodeRemoved(uri: RedisURI) extends NodeRemovedEvent
-  case class SlaveNodeRemoved(uri: RedisURI) extends NodeRemovedEvent
 
   trait NodeJoinedEvent {
     val uri: RedisURI
@@ -151,7 +137,7 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
                getSlavesOfMasterSupervisorMaker: ActorRefFactory => ActorRef,
                forgetRedisNodeSupervisorMaker: ActorRefFactory => ActorRef)
               (implicit clusterOperations: ClusterOperations) extends Actor with ActorLogging {
-  import MessageBus.{AddNode, AddMaster, AddSlave, Shutdown, FailedAddingMasterRedisNode, RemoveNode, RemoveMaster, RemoveSlave}
+  import MessageBus._
   import Overseer._
   import ClusterOperations.ClusterConnectionsType
 

@@ -14,7 +14,7 @@ class RestApi(system: ActorSystem, timeout: Timeout) extends RestRoutes {
   implicit val requestTimeout = timeout
   implicit def executionContext = system.dispatcher
 
-  def createCornucopiaTaskMaster = system.actorOf(CornucopiaTaskMaster.props)
+  def createCornucopiaTaskMaster = system.actorOf(CornucopiaTaskMaster.props, CornucopiaTaskMaster.name)
 }
 
 trait RestRoutes extends CornucopiaApi with EventMarshalling {

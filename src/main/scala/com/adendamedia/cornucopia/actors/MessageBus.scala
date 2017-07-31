@@ -46,9 +46,42 @@ object MessageBus {
 
   /**
     * Event indicating that a new node has been added to the Redis cluster with the given uri
+    */
+  trait NodeAdded {
+    val uri: RedisURI
+  }
+
+  /**
+    * Event indicating that a new master node has been added to the Redis cluster with the given uri
     * @param uri The uri of the node that was added
     */
-  case class NodeAdded(uri: RedisURI)
+  case class MasterNodeAdded(uri: RedisURI) extends NodeAdded
+
+  /**
+    * Event indicating that a new slave node has been added to the Redis cluster with the given uri
+    * @param uri The uri of the node that was added
+    */
+  case class SlaveNodeAdded(uri: RedisURI) extends NodeAdded
+
+  /**
+    * Event indicating that a node has been removed from the Redis cluster with the given uri
+    */
+  trait NodeRemoved {
+    val uri: RedisURI
+  }
+
+  /**
+    * Event indicating that a master node has been removed from the Redis cluster with the given uri
+    * @param uri The uri of the node that was removed
+    */
+  case class MasterNodeRemoved(uri: RedisURI) extends NodeRemoved
+
+  /**
+    * Event indicating that a slave node has been removed from the Redis cluster with the given uri
+    * @param uri The uri of the node that was removed
+    */
+  case class SlaveNodeRemoved(uri: RedisURI) extends NodeRemoved
+
 
   /**
     * Event indicating that an attempt to add a redis node to the cluster has failed

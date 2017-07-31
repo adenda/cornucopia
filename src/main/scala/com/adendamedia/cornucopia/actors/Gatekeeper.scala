@@ -13,6 +13,8 @@ object Gatekeeper {
   final case class Task(operation: String, redisNodeIp: String)
   case object TaskAccepted
   case object TaskDenied
+
+  val name = "gatekeeper"
 }
 
 /**
@@ -23,7 +25,7 @@ class Gatekeeper extends Actor with ActorLogging {
   import Gatekeeper._
   import Dispatcher._
 
-  private val dispatcher: ActorRef = context.actorOf(Dispatcher.props, "dispatcher")
+  private val dispatcher: ActorRef = context.actorOf(Dispatcher.props, Dispatcher.name)
 
   def receive: Receive = {
     case Task(operation, redisNodeIp) => processTask(operation, redisNodeIp, sender)

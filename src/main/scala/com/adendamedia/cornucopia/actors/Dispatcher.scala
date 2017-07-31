@@ -27,6 +27,8 @@ object Dispatcher {
   case class DispatchTask(operation: Operation, redisURI: RedisURI)
 
   case object CheckTimeout
+
+  val name = "dispatcher"
 }
 
 class Dispatcher extends Actor with ActorLogging {
@@ -36,6 +38,7 @@ class Dispatcher extends Actor with ActorLogging {
   import context.dispatcher
 
   context.system.eventStream.subscribe(self, classOf[NodeAdded])
+  context.system.eventStream.subscribe(self, classOf[NodeRemoved])
 
   def receive: Receive = accepting
 
@@ -59,7 +62,12 @@ class Dispatcher extends Actor with ActorLogging {
       log.info(s"Redis node '${event.uri}' successfully added to cluster")
       val ref = dispatchInformation.ref
       ref ! Right((dispatchInformation.task.operation.key, event.uri)) // TODO: Make this better
-      context.become(accepting)
+      context.unbecome()
+    case event: NodeRemoved =>
+      log.info(s"Redis node '${event.uri}' successfully removed")
+      val ref = dispatchInformation.ref
+      ref ! Right((dispatchInformation.task.operation.key, event.uri)) // TODO: Make this better
+      context.unbecome()
     case CheckTimeout =>
       log.error(s"Dispatch task has failed with timeout after $dispatchTaskTimeout seconds.")
       val ref = dispatchInformation.ref
