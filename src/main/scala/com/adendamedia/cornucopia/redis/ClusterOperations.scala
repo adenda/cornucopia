@@ -564,7 +564,12 @@ object ClusterOperationsImpl extends ClusterOperations {
   def replicateMaster(slaveUri: RedisURI, masterNodeId: NodeId)
                      (implicit executionContext: ExecutionContext): Future[Unit] = {
     implicit val saladAPI = newSaladAPI(slaveUri)
-    saladAPI.clusterReplicate(masterNodeId)
+    saladAPI.clusterNodes.flatMap { clusterNodes =>
+      val slaveNodeId = clusterNodes.toList.filter(node => node.getUri == slaveUri).map(_.getNodeId).headOption.getOrElse(
+        throw ReplicateMasterException(s"Could not get connection to slave node $slaveUri")
+      )
+      getConnection(slaveNodeId) map(_.clusterReplicate(masterNodeId))
+    }
   }
 
   def getRole(uri: RedisURI)(implicit executionContext: ExecutionContext): Future[Role] = {
