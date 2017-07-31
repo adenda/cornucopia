@@ -48,18 +48,18 @@ class ReplicatePoorestMasterTest extends TestKit(ActorSystem("ReplicatePoorestMa
     "010 - succesfully replicate poorest master with new slave" in new TestConfig {
 
       implicit val executionContext: ExecutionContext = ReplicatePoorestMasterConfigTest.executionContext
-      when(clusterOperations.findPoorestMaster(dummyConnections)).thenReturn(
+      when(clusterOperations.findPoorestMaster).thenReturn(
         Future.successful(poorestMaster)
       )
 
-      when(clusterOperations.replicateMaster(newSlaveRedisURI, poorestMaster, dummyConnections, dummyRedisUriToNodeId)).thenReturn(
+      when(clusterOperations.replicateMaster(newSlaveRedisURI, poorestMaster)).thenReturn(
         Future.successful()
       )
 
       val props = ReplicatePoorestMasterSupervisor.props
       val replicatePoorestMasterSupervisor = TestActorRef[ReplicatePoorestMasterSupervisor](props)
 
-      val message = ReplicatePoorestMasterUsingSlave(newSlaveRedisURI, dummyConnections, dummyRedisUriToNodeId)
+      val message = ReplicatePoorestMasterUsingSlave(newSlaveRedisURI)
 
       replicatePoorestMasterSupervisor ! message
 
@@ -71,19 +71,18 @@ class ReplicatePoorestMasterTest extends TestKit(ActorSystem("ReplicatePoorestMa
     "020 - successfully replicate poorest remaining master with existing slave" in new TestConfig {
       implicit val executionContext: ExecutionContext = ReplicatePoorestMasterConfigTest.executionContext
 
-      when(clusterOperations.findPoorestRemainingMaster(dummyConnections, excludedMasters)).thenReturn(
+      when(clusterOperations.findPoorestRemainingMaster(excludedMasters)).thenReturn(
         Future.successful(poorestMaster)
       )
 
-      when(clusterOperations.replicateMaster(slaveRedisURI, poorestMaster, dummyConnections, dummyRedisUriToNodeId)).thenReturn(
+      when(clusterOperations.replicateMaster(slaveRedisURI, poorestMaster)).thenReturn(
         Future.successful()
       )
 
       val props = ReplicatePoorestMasterSupervisor.props
       val replicatePoorestMasterSupervisor = TestActorRef[ReplicatePoorestMasterSupervisor](props)
 
-      val message = ReplicatePoorestRemainingMasterUsingSlave(slaveRedisURI, excludedMasters, dummyConnections,
-        dummyRedisUriToNodeId)
+      val message = ReplicatePoorestRemainingMasterUsingSlave(slaveRedisURI, excludedMasters)
 
       replicatePoorestMasterSupervisor ! message
 

@@ -72,11 +72,10 @@ class FindPoorestMaster(implicit config: ReplicatePoorestMasterConfig,
 
   private def findPoorestRemainingMaster(msg: ReplicatePoorestRemainingMasterUsingSlave, supervisor: ActorRef) = {
     implicit val executionContext: ExecutionContext = config.executionContext
-    val connections = msg.connections
     val excludedMasters = msg.excludedMasters
-    clusterOperations.findPoorestRemainingMaster(connections, excludedMasters) map { poorestMaster =>
+    clusterOperations.findPoorestRemainingMaster(excludedMasters) map { poorestMaster =>
       log.info(s"Found poorest remaining master to replicate: $poorestMaster")
-      ReplicateMaster(msg.slaveUri, poorestMaster, connections, msg.redisUriToNodeId, supervisor)
+      ReplicateMaster(msg.slaveUri, poorestMaster, supervisor)
     } recover {
       case e => self ! KillChild(msg, Some(e))
     } pipeTo replicatePoorestMaster
@@ -84,10 +83,9 @@ class FindPoorestMaster(implicit config: ReplicatePoorestMasterConfig,
 
   private def findPoorestMaster(msg: ReplicatePoorestMasterUsingSlave, supervisor: ActorRef) = {
     implicit val executionContext: ExecutionContext = config.executionContext
-    val connections = msg.connections
-    clusterOperations.findPoorestMaster(connections) map { poorestMaster =>
+    clusterOperations.findPoorestMaster map { poorestMaster =>
       log.info(s"Found poorest master to replicate: $poorestMaster")
-      ReplicateMaster(msg.slaveUri, poorestMaster, msg.connections, msg.redisUriToNodeId, supervisor)
+      ReplicateMaster(msg.slaveUri, poorestMaster, supervisor)
     } recover {
       case e => self ! KillChild(msg, Some(e))
     } pipeTo replicatePoorestMaster
@@ -117,7 +115,7 @@ class ReplicatePoorestMaster(implicit config: ReplicatePoorestMasterConfig,
   private def replicateMaster(msg: ReplicateMaster) = {
     val supervisor = msg.ref
     implicit val executionContext: ExecutionContext = config.executionContext
-    clusterOperations.replicateMaster(msg.slaveUri, msg.masterNodeId, msg.connections, msg.redisUriToNodeId) map { _ =>
+    clusterOperations.replicateMaster(msg.slaveUri, msg.masterNodeId) map { _ =>
       ReplicatedMaster(msg.slaveUri)
     } recover {
       case e => self ! KillChild(msg, Some(e))

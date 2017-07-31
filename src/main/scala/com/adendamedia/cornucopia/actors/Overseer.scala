@@ -91,16 +91,11 @@ object Overseer {
   case object ClusterConnectionsValid
   case object ClusterConnectionsInvalid
 
-  case class ReplicatePoorestMasterUsingSlave(slaveUri: RedisURI,
-                                              connections: ClusterOperations.ClusterConnectionsType,
-                                              redisUriToNodeId: RedisUriToNodeId) extends OverseerCommand
+  case class ReplicatePoorestMasterUsingSlave(slaveUri: RedisURI) extends OverseerCommand
   case class ReplicatePoorestRemainingMasterUsingSlave(slaveUri: RedisURI,
-                                                       excludedMasters: List[RedisURI],
-                                                       connections: ClusterOperations.ClusterConnectionsType,
-                                                       redisUriToNodeId: RedisUriToNodeId) extends OverseerCommand
-  case class ReplicateMaster(slaveUri: RedisURI, masterNodeId: ClusterOperations.NodeId,
-                             connections: ClusterConnectionsType, redisUriToNodeId: RedisUriToNodeId,
-                             ref: ActorRef) extends OverseerCommand
+                                                       excludedMasters: List[RedisURI]) extends OverseerCommand
+  case class ReplicateMaster(slaveUri: RedisURI, masterNodeId: ClusterOperations.NodeId, ref: ActorRef)
+    extends OverseerCommand
   case class ReplicatedMaster(newSlaveUri: RedisURI)
 
   trait FailoverCommand extends OverseerCommand {
@@ -265,7 +260,7 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
       log.info(s"Got cluster connections")
       val masterConnections = connections._1
       val redisUriToNodeId = connections._2
-      replicatePoorestMasterSupervisor ! ReplicatePoorestMasterUsingSlave(uri, masterConnections, redisUriToNodeId)
+      replicatePoorestMasterSupervisor ! ReplicatePoorestMasterUsingSlave(uri)
       context.become(addingSlaveNode(uri, Some(connections)))
     case ReplicatedMaster(slaveUri) =>
       log.info(s"Successfully replicated master node by new slave node $uri")
@@ -368,7 +363,7 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
 
       val excludedMaster = List(retiredMasterUri)
       event.slaves foreach { slave =>
-        val msg = ReplicatePoorestRemainingMasterUsingSlave(slave.getUri, excludedMaster, connections, redisUriToNodeId)
+        val msg = ReplicatePoorestRemainingMasterUsingSlave(slave.getUri, excludedMaster)
         replicatePoorestMasterSupervisor ! msg
       }
       val slaves = event.slaves.map(_.getUri)
@@ -386,7 +381,7 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
       log.info(s"Successfully replicated master node by new slave node $uri")
       remainingSlaves match {
         case x :: xs =>
-          val msg = ReplicatePoorestRemainingMasterUsingSlave(x, excludedMasters, connections, redisUriToNodeId)
+          val msg = ReplicatePoorestRemainingMasterUsingSlave(x, excludedMasters)
           replicatePoorestMasterSupervisor ! msg
           context.become(
             replicatingPoorestRemainingMaster(retiredMasterUri, xs, excludedMasters, connections, redisUriToNodeId)
