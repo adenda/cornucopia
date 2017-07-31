@@ -37,6 +37,14 @@ object MessageBus {
   case class RemoveMaster(uri: RedisURI) extends RemoveNode
 
   /**
+    * Command to remove a slave node from the Redis cluster. The provided uri indicates to remove the given redis node.
+    * It might be necessary to do a fail-over to make the node with the given URI a slave redis node.
+    * @param uri The redis node that should be removed; if necessary trigger a fail-over to make sure that the node with
+    *            the given uri becomes the node we're removing.
+    */
+  case class RemoveSlave(uri: RedisURI) extends RemoveNode
+
+  /**
     * Event indicating that a new node has been added to the Redis cluster with the given uri
     * @param uri The uri of the node that was added
     */

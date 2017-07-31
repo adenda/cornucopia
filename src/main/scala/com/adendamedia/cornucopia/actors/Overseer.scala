@@ -156,7 +156,7 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
                getSlavesOfMasterSupervisorMaker: ActorRefFactory => ActorRef,
                forgetRedisNodeSupervisorMaker: ActorRefFactory => ActorRef)
               (implicit clusterOperations: ClusterOperations) extends Actor with ActorLogging {
-  import MessageBus.{AddNode, AddMaster, AddSlave, Shutdown, FailedAddingMasterRedisNode, RemoveNode, RemoveMaster}
+  import MessageBus.{AddNode, AddMaster, AddSlave, Shutdown, FailedAddingMasterRedisNode, RemoveNode, RemoveMaster, RemoveSlave}
   import Overseer._
   import ClusterOperations.ClusterConnectionsType
 
@@ -199,6 +199,11 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
       val msg = FailoverMaster(rm.uri)
       failoverSupervisor ! msg
       context.become(failingOverForRemovingMaster(rm.uri))
+    case rs: RemoveSlave =>
+      log.info(s"Receive message RemoveSlave(${rs.uri})")
+      val msg = FailoverSlave(rs.uri)
+      failoverSupervisor ! msg
+      context.become(failingOverForRemovingSlave(rs.uri))
   }
 
   private def failingOverForRemovingMaster(uri: RedisURI): Receive = {
@@ -207,6 +212,14 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
       clusterConnectionsSupervisor ! GetClusterConnections(uri)
       reshardClusterSupervisor ! ReshardWithoutRetiredMaster(uri)
       context.become(computingReshardTableForRemovingMaster(uri))
+  }
+
+  private def failingOverForRemovingSlave(uri: RedisURI): Receive = {
+    case FailoverComplete =>
+      log.info(s"Failover completed successfully, $uri is now a slave node")
+      val cmd = ForgetNode(uri)
+      forgetRedisNodeSupervisor ! cmd
+      context.become(forgettingSlaveNode(cmd, uri))
   }
 
   private def computingReshardTableForRemovingMaster(retiredMaster: RedisURI,
@@ -338,7 +351,7 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
       getSlavesOfMasterSupervisor ! cmd
       context.become(gettingSlavesOfMaster(job.retiredMasterUri, cmd, job.connections, job.redisUriToNodeId))
     case _ =>
-      log.error("wat42")
+      log.error("wat42") // TODO: wat
   }
 
   private def gettingSlavesOfMaster(retiredMasterUri: RedisURI, command: GetSlavesOf,
@@ -350,7 +363,7 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
       if (event.slaves.isEmpty) {
         val cmd = ForgetNode(retiredMasterUri)
         forgetRedisNodeSupervisor ! cmd
-        context.become(forgettingNode(cmd, retiredMasterUri))
+        context.become(forgettingMasterNode(cmd, retiredMasterUri))
       }
 
       val excludedMaster = List(retiredMasterUri)
@@ -381,14 +394,22 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
         case Nil =>
           val cmd = ForgetNode(retiredMasterUri)
           forgetRedisNodeSupervisor ! cmd
-          context.become(forgettingNode(cmd, retiredMasterUri))
+          context.become(forgettingMasterNode(cmd, retiredMasterUri))
       }
   }
 
-  private def forgettingNode(overseerCommand: OverseerCommand, uri: RedisURI): Receive = {
+  private def forgettingMasterNode(overseerCommand: OverseerCommand, uri: RedisURI): Receive = {
     case event: NodeForgotten =>
-      log.info(s"Successfully forgot node ${event.uri}")
+      log.info(s"Successfully forgot master node ${event.uri}")
       val msg = MasterNodeRemoved(uri)
+      context.system.eventStream.publish(msg)
+      context.become(acceptingCommands)
+  }
+
+  private def forgettingSlaveNode(overseerCommand: OverseerCommand, uri: RedisURI): Receive = {
+    case event: NodeForgotten =>
+      log.info(s"Successfully forgot slave node ${event.uri}")
+      val msg = SlaveNodeRemoved(uri)
       context.system.eventStream.publish(msg)
       context.become(acceptingCommands)
   }

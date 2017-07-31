@@ -104,6 +104,13 @@ class OverseerTest extends TestKit(testSystem)
 
   }
 
+  trait RemoveSlaveTest {
+    val uriString: String = "redis://192.168.0.100"
+    val redisURI: RedisURI = RedisURI.create(uriString)
+    implicit val clusterOperations: ClusterOperations = mock[ClusterOperations]
+
+  }
+
   "Overseer" must {
     "retry joining node to cluster if it fails" in new FailureTest {
       val expectedErrorMessage =
@@ -299,6 +306,23 @@ class OverseerTest extends TestKit(testSystem)
       overseer ! ReplicatedMaster(redisURI)
 
       val msg = SlaveNodeAdded(redisURI)
+      probe.expectMsg(msg)
+    }
+
+    "040 - publish to event bus when the removed slave has been forgotten" in new RemoveSlaveTest {
+      val probe = TestProbe()
+      system.eventStream.subscribe(probe.ref, classOf[SlaveNodeRemoved])
+
+      val blackHole = (f: ActorRefFactory) => f.actorOf(TestActors.blackholeProps)
+
+      val props = Overseer.props(blackHole, blackHole, blackHole, blackHole, blackHole, blackHole, blackHole, blackHole, blackHole)
+      val overseer = TestActorRef[Overseer](props)
+
+      overseer ! RemoveSlave(redisURI)
+      overseer ! FailoverComplete
+      overseer ! NodeForgotten(redisURI)
+
+      val msg = SlaveNodeRemoved(redisURI)
       probe.expectMsg(msg)
     }
 
