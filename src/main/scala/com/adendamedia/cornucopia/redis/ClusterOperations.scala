@@ -189,6 +189,14 @@ trait ClusterOperations {
   def forgetNode(uri: RedisURI, connections: ClusterConnectionsType, redisUriToNodeId: RedisUriToNodeId)
                 (implicit executionContext: ExecutionContext): Future[Unit]
 
+  /**
+    * Forget the redis node at the given URI
+    * @param uri The URI of the redis node to forget
+    * @param executionContext The execution context
+    * @return Future Unit of success
+    */
+  def forgetNode(uri: RedisURI)(implicit executionContext: ExecutionContext): Future[Unit]
+
 }
 
 object ClusterOperationsImpl extends ClusterOperations {
@@ -594,6 +602,25 @@ object ClusterOperationsImpl extends ClusterOperations {
       case e: RedisCommandExecutionException => throw e // This isn't likely to happen
     }
 
+  }
+
+  def forgetNode(uri: RedisURI)(implicit executionContext: ExecutionContext): Future[Unit] = {
+    implicit val saladAPI = newSaladAPI
+
+    saladAPI.clusterNodes map { clusterNodes =>
+      val nodes = clusterNodes.toList
+      val removeNodeId: NodeId = nodes.find(_.getUri == uri).map(_.getNodeId).getOrElse(
+        throw CornucopiaForgetNodeException(s"Could not find the redis node to remove $uri")
+      )
+      val remainingConnections = nodes.filter(_.getNodeId != removeNodeId) map(node => newSaladAPI(node.getUri))
+
+      newSaladAPI(uri).clusterReset(hard = true).flatMap { _ =>
+        val results: List[Future[Unit]] = remainingConnections map(_.clusterForget(removeNodeId))
+        Future.fold(results)()((r, _) => r)
+      } recover {
+        case e: RedisCommandExecutionException => throw e // This isn't likely to happen
+      }
+    }
   }
 
 }

@@ -77,10 +77,8 @@ class ForgetRedisNode(implicit config: ForgetRedisNodeConfig, clusterOperations:
 
   private def forgetNode(cmd: ForgetNode, ref: ActorRef) = {
     implicit val executionContext: ExecutionContext = config.executionContext
-    val connections = cmd.connections
-    val redisUriToNodeId = cmd.redisUriToNodeId
     val uri = cmd.uri
-    clusterOperations.forgetNode(uri, connections, redisUriToNodeId) map (_ => NodeForgotten(uri)) recover { case e =>
+    clusterOperations.forgetNode(uri) map (_ => NodeForgotten(uri)) recover { case e =>
       self ! KillChild(cmd, Some(e))
     } pipeTo ref
   }

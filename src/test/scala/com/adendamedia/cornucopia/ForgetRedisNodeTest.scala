@@ -35,8 +35,6 @@ class ForgetRedisNodeTest extends TestKit(testSystem)
       val executionContext: ExecutionContext = system.dispatcher
       val maxNrRetries: Int = 2
     }
-    val dummyConnections: ClusterConnectionsType = Map.empty[NodeId, Connection.Salad]
-    val dummyRedisUriToNodeId = Map.empty[RedisUriString, NodeId]
     val uriString: String = "redis://192.168.0.100"
     val redisURI: RedisURI = RedisURI.create(uriString)
     implicit val clusterOperations: ClusterOperations = mock[ClusterOperations]
@@ -46,14 +44,14 @@ class ForgetRedisNodeTest extends TestKit(testSystem)
     "010 - forget redis node" in new TestConfig {
 
       implicit val executionContext: ExecutionContext = ForgetRedisNodeConfigTest.executionContext
-      when(clusterOperations.forgetNode(redisURI, dummyConnections, dummyRedisUriToNodeId)).thenReturn(
+      when(clusterOperations.forgetNode(redisURI)).thenReturn(
         Future.successful()
       )
 
       val props = ForgetRedisNodeSupervisor.props
       val forgetRedisNodeSupervisor = TestActorRef[ForgetRedisNodeSupervisor](props)
 
-      val msg = ForgetNode(redisURI, dummyConnections, dummyRedisUriToNodeId)
+      val msg = ForgetNode(redisURI)
 
       forgetRedisNodeSupervisor ! msg
 
@@ -64,14 +62,14 @@ class ForgetRedisNodeTest extends TestKit(testSystem)
 
     "020 - retry if it fails to forget redis node" in new TestConfig {
       implicit val executionContext: ExecutionContext = ForgetRedisNodeConfigTest.executionContext
-      when(clusterOperations.forgetNode(redisURI, dummyConnections, dummyRedisUriToNodeId)).thenReturn(
+      when(clusterOperations.forgetNode(redisURI)).thenReturn(
         Future.failed(CornucopiaForgetNodeException("wat"))
       )
 
       val props = ForgetRedisNodeSupervisor.props
       val forgetRedisNodeSupervisor = TestActorRef[ForgetRedisNodeSupervisor](props)
 
-      val msg = ForgetNode(redisURI, dummyConnections, dummyRedisUriToNodeId)
+      val msg = ForgetNode(redisURI)
 
       val expectedMessage = s"Retrying to forget redis node"
 

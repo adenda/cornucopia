@@ -123,11 +123,8 @@ object Overseer {
   /**
     * All other nodes should forget this node. Either a slave node, or a master without any slaves.
     * @param uri The URI of the node to forget from the cluster
-    * @param connections The connections to cluster master nodes
-    * @param redisUriToNodeId Mapping of Redis URI strings to Node Id's
     */
-  case class ForgetNode(uri: RedisURI, connections: ClusterConnectionsType, redisUriToNodeId: RedisUriToNodeId)
-    extends OverseerCommand
+  case class ForgetNode(uri: RedisURI) extends OverseerCommand
 
   /**
     * Event signalling that the node asked to be forgotten was forgotten
@@ -351,7 +348,7 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
       log.info(s"Got slaves of retired master $retiredMasterUri: ${event.slaves.map(_.getUri.toURI)}")
 
       if (event.slaves.isEmpty) {
-        val cmd = ForgetNode(retiredMasterUri, connections, redisUriToNodeId)
+        val cmd = ForgetNode(retiredMasterUri)
         forgetRedisNodeSupervisor ! cmd
         context.become(forgettingNode(cmd, retiredMasterUri))
       }
@@ -382,7 +379,7 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
             replicatingPoorestRemainingMaster(retiredMasterUri, xs, excludedMasters, connections, redisUriToNodeId)
           )
         case Nil =>
-          val cmd = ForgetNode(retiredMasterUri, connections, redisUriToNodeId)
+          val cmd = ForgetNode(retiredMasterUri)
           forgetRedisNodeSupervisor ! cmd
           context.become(forgettingNode(cmd, retiredMasterUri))
       }
