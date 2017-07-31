@@ -131,7 +131,7 @@ class MigrateSlotsTest extends TestKit(testSystem)
   }
 
   "MigrateSlotsJobManager" should {
-    "migrate slots for adding new master" in new SuccessTestForAddingNewMaster {
+    "010 - migrate slots for adding new master" in new SuccessTestForAddingNewMaster {
       val props = MigrateSlotsJobManager.props(migrateSlotWorkerMaker)
       val migrateSlotsJobManager = TestActorRef[MigrateSlotsJobManager](props)
       val msg = MigrateSlotsForNewMaster(redisURI, dummyConnections, testRedisUriToNodeId, reshardTableMock)
@@ -145,12 +145,12 @@ class MigrateSlotsTest extends TestKit(testSystem)
 
     }
 
-    "migrate slots for removing retired master" in new SuccessTestForRemovingRetiredMaster {
+    "020 - migrate slots for removing retired master" in new SuccessTestForRemovingRetiredMaster {
       val props = MigrateSlotsJobManager.props(migrateSlotWorkerMaker)
       val migrateSlotsJobManager = TestActorRef[MigrateSlotsJobManager](props)
       val msg = MigrateSlotsWithoutRetiredMaster(redisURI, dummyConnections, testRedisUriToNodeId, reshardTableMock)
 
-      val pat = s"Successfully migrated slot \\d from node\\d to $testTargetNodeId"
+      val pat = s"Successfully migrated slot \\d from $testTargetNodeId to node\\d"
 
       EventFilter.info(pattern = pat,
         occurrences = 7) intercept {
