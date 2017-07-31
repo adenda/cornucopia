@@ -656,11 +656,10 @@ object ClusterOperationsImpl extends ClusterOperations {
       val removeNodeId: NodeId = nodes.find(_.getUri == uri).map(_.getNodeId).getOrElse(
         throw CornucopiaForgetNodeException(s"Could not find the redis node to remove $uri")
       )
-      val remainingConnections = nodes.filter(_.getNodeId != removeNodeId) map(node => newSaladAPI(node.getUri))
+      val remainingConnections = nodes.filterNot(_.getNodeId == removeNodeId) map(node => getConnection(node.getNodeId))
 
       newSaladAPI(uri).clusterReset(hard = true).flatMap { _ =>
-        val results: List[Future[Unit]] = remainingConnections map(_.clusterForget(removeNodeId))
-        Future.fold(results)()((r, _) => r)
+        Future.sequence(remainingConnections).map(connection => connection.map(_.clusterForget(removeNodeId)))
       } recover {
         case e: RedisCommandExecutionException => throw e // This isn't likely to happen
       }
