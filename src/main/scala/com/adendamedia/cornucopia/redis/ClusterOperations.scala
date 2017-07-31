@@ -583,7 +583,7 @@ object ClusterOperationsImpl extends ClusterOperations {
       case e: Throwable => throw CornucopiaGetRoleException(s"Something bad happened", e)
     }
 
-    result.map(_.head)
+    result.map(_.headOption.getOrElse(throw CornucopiaGetRoleException(s"Could not get role")))
   }
 
   def failoverMaster(uri: RedisURI)(implicit executionContext: ExecutionContext): Future[Unit] = {
