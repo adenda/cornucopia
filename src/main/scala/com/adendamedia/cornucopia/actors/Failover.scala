@@ -201,8 +201,8 @@ class FailoverWorker(supervisor: ActorRef)(implicit config: FailoverConfig, clus
       scheduleVerifyFailover(cmd)
       context.become(failingOver(retries + 1))
     case kill: KillChild =>
-      val e = kill.reason.getOrElse(new Exception)
-      log.error(s"Failed performing failover", e)
+      val e = kill.reason.getOrElse(new Exception("An unknown error occurred"))
+      log.error(s"Failed performing failover: {}", e)
       throw FailedOverseerCommand(kill.command)
   }
 
@@ -218,14 +218,14 @@ class FailoverWorker(supervisor: ActorRef)(implicit config: FailoverConfig, clus
   private def failoverMaster(msg: FailoverMaster) = {
     implicit val executionContext: ExecutionContext = config.executionContext
     clusterOperations.failoverMaster(msg.uri) map (_ => VerifyFailoverCommand(msg)) recover {
-      case e => self ! KillChild(msg)
+      case e => self ! KillChild(msg, Some(e))
     } pipeTo verifyFailover
   }
 
   private def failoverSlave(msg: FailoverSlave) = {
     implicit val executionContext: ExecutionContext = config.executionContext
     clusterOperations.failoverSlave(msg.uri) map (_ => VerifyFailoverCommand(msg)) recover {
-      case e => self ! KillChild(msg)
+      case e => self ! KillChild(msg, Some(e))
     } pipeTo verifyFailover
   }
 

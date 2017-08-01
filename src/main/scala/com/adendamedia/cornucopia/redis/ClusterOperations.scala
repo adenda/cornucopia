@@ -51,6 +51,10 @@ object ClusterOperations {
   case class CornucopiaForgetNodeException(message: String, reason: Throwable = None.orNull)
     extends Throwable(message, reason) with Serializable
 
+  @SerialVersionUID(1L)
+  case class CornucopiaFindPoorestMasterException(message: String, reason: Throwable = None.orNull)
+    extends Throwable(message, reason) with Serializable
+
   type NodeId = String
   type RedisUriString = String
   type ClusterConnectionsType = Map[NodeId, Connection.Salad]
@@ -466,9 +470,13 @@ object ClusterOperationsImpl extends ClusterOperations {
     * Notify all master nodes of a slot assignment so that they will immediately be able to redirect clients.
     */
   def notifySlotAssignment(slot: Slot, assignedNodeId: NodeId, clusterConnections: ClusterConnectionsType)
-                                    (implicit executionContext: ExecutionContext): Future[Unit] = {
-    val notifications  = clusterConnections.map { case (_: NodeId, connection: Salad) =>
-        connection.clusterSetSlotNode(slot, assignedNodeId)
+                          (implicit executionContext: ExecutionContext): Future[Unit] = {
+    val notifications = clusterConnections map { case (_: NodeId, connection: Salad) =>
+      connection.clusterSetSlotNode(slot, assignedNodeId) recover {
+        case e: RedisCommandExecutionException =>
+          logger.error(s"Problem notifying slot assignment: ", e)
+          Unit
+      }
     }
     Future.sequence(notifications).map(x => x)
   }
@@ -492,7 +500,13 @@ object ClusterOperationsImpl extends ClusterOperations {
       }
     } map(_.groupBy(identity).mapValues(_.size)) map(_.min)
 
-    poorestMaster.map(_._1)
+    poorestMaster recover {
+      case e => throw CornucopiaFindPoorestMasterException("Could not find a poorest master", e)
+    }
+
+    poorestMaster.map(_._1) recover {
+      case e => throw CornucopiaFindPoorestMasterException("Could not find a poorest master", e)
+    }
   }
 
   def findPoorestMaster(implicit executionContext: ExecutionContext): Future[NodeId] = {
@@ -602,14 +616,20 @@ object ClusterOperationsImpl extends ClusterOperations {
   def failoverSlave(uri: RedisURI)(implicit executionContext: ExecutionContext): Future[Unit] = {
     implicit val saladAPI = newSaladAPI
 
-    saladAPI.clusterNodes map { nodes =>
-      val n = nodes.toList
-      val slaveUri = (for {
-        master <- n if master.getUri == uri
-        slave <- n if slave.getSlaveOf == master.getNodeId
-      } yield slave.getUri).head
+    saladAPI.clusterNodes map { clusterNodes =>
+      val nodes = clusterNodes.toList
 
-      failoverMaster(slaveUri)
+      val masterNodeId: NodeId = nodes.find(_.getUri == uri).getOrElse(
+        throw CornucopiaFailoverException(s"Could not find node with uri $uri")
+      ).getNodeId
+
+      val slaveNodeId: NodeId = nodes.find(_.getSlaveOf == masterNodeId).getOrElse(
+        throw CornucopiaFailoverException(s"Could not get slave node to fail over master node $uri")
+      ).getNodeId
+
+      getConnection(slaveNodeId).flatMap(_.clusterFailover() map identity) recover { case e =>
+        throw CornucopiaFailoverException(s"Could not fail over slave $slaveNodeId of master $uri", e)
+      }
     }
   }
 

@@ -44,6 +44,7 @@ object ConfigNew {
 
   trait ReplicatePoorestMasterConfig {
     val executionContext: ExecutionContext
+    val maxNrRetries: Int
   }
 
   trait FailoverConfig {
@@ -108,6 +109,7 @@ class ConfigNew {
 
     object ReplicatePoorestMaster extends ReplicatePoorestMasterConfig {
       val executionContext: ExecutionContext = actorSystem.dispatcher
+      val maxNrRetries: Int = config.getInt("replicate.poorest.master.max.retries")
     }
 
     object Failover extends FailoverConfig {

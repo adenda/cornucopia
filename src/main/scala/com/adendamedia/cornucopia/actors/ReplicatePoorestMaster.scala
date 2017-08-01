@@ -23,10 +23,17 @@ object ReplicatePoorestMasterSupervisor {
 class ReplicatePoorestMasterSupervisor(implicit config: ReplicatePoorestMasterConfig,
                                        clusterOperations: ClusterOperations) extends CornucopiaSupervisor {
   import Overseer._
+  import ClusterOperations._
 
   override def receive: Receive = accepting
 
   private val findPoorestMaster: ActorRef = context.actorOf(FindPoorestMaster.props, FindPoorestMaster.name)
+
+  override def supervisorStrategy = OneForOneStrategy(config.maxNrRetries) {
+    case e: CornucopiaFindPoorestMasterException =>
+      log.error(s"Failed to find poorest master: {}", e)
+      Restart
+  }
 
   override def accepting: Receive = {
     case msg: ReplicatePoorestMasterUsingSlave =>
@@ -59,6 +66,12 @@ class FindPoorestMaster(implicit config: ReplicatePoorestMasterConfig,
   import Overseer._
 
   val replicatePoorestMaster = context.actorOf(ReplicatePoorestMaster.props, ReplicatePoorestMaster.name)
+
+  override def preRestart(reason: Throwable, message: Option[Any]): Unit = {
+    // Retry by sending the same message back to self
+    self ! message.get
+    super.preRestart(reason, message)
+  }
 
   override def receive: Receive = {
     case msg: ReplicatePoorestMasterUsingSlave =>
