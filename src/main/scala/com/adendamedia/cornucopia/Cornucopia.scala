@@ -58,6 +58,11 @@ object Cornucopia {
     implicit val clusterOperations: ClusterOperations
   }
 
+  trait ClusterTopology {
+    implicit val clusterTopologyConfig: ClusterTopologyConfig
+    implicit val clusterOperations: ClusterOperations
+  }
+
 }
 
 class Cornucopia {
@@ -149,6 +154,14 @@ class Cornucopia {
       (f: ActorRefFactory) => f.actorOf(supervisorProps, ForgetRedisNodeSupervisor.name)
   }
 
+  object ClusterTopologyImpl extends ClusterTopology {
+    implicit val clusterTopologyConfig: ClusterTopologyConfig = config.Cornucopia.ClusterTopology
+    implicit val clusterOperations: ClusterOperations = clusterOperationsImpl
+    val supervisorProps: Props = ClusterTopologySupervisor.props
+    val factory: ActorRefFactory => ActorRef =
+      (f: ActorRefFactory) => f.actorOf(supervisorProps, ClusterTopologySupervisor.name)
+  }
+
   implicit val clusterOperations: ClusterOperations = clusterOperationsImpl
   val joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef = JoinRedisNodeImpl.factory
   val reshardClusterSupervisorMaker: ActorRefFactory => ActorRef = ReshardClusterImpl.factory
@@ -159,12 +172,17 @@ class Cornucopia {
   val failoverSupervisorMaker: ActorRefFactory => ActorRef = FailoverImpl.factory
   val getSlavesOfMasterSupervisorMaker: ActorRefFactory => ActorRef = GetSlavesOfMasterImpl.factory
   val forgetRedisNodeSupervisorMaker: ActorRefFactory => ActorRef = ForgetRedisNodeImpl.factory
+  val clusterTopologySupervisorMaker: ActorRefFactory => ActorRef = ClusterTopologyImpl.factory
 
-  val props: Props = Overseer.props(joinRedisNodeSupervisorMaker, reshardClusterSupervisorMaker,
+  val overseerProps: Props = Overseer.props(joinRedisNodeSupervisorMaker, reshardClusterSupervisorMaker,
     clusterConnectionsSupervisorMaker, clusterReadySupervisorMaker, migrateSlotsSupervisorMaker,
     replicatePoorestMasterSupervisorMaker, failoverSupervisorMaker, getSlavesOfMasterSupervisorMaker,
-    forgetRedisNodeSupervisorMaker)
+    forgetRedisNodeSupervisorMaker, clusterTopologySupervisorMaker)
 
-  val ref: ActorRef = system.actorOf(props, Overseer.name)
+  val overseerFactory: ActorRefFactory => ActorRef =
+    (f: ActorRefFactory) => f.actorOf(overseerProps, Overseer.name)
 
+  val props: Props = Lifecycle.props(overseerFactory)
+
+  val ref: ActorRef = system.actorOf(props, Lifecycle.name)
 }

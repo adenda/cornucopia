@@ -22,11 +22,13 @@ object Overseer {
             replicatePoorestMasterSupervisorMaker: ActorRefFactory => ActorRef,
             failoverSupervisorMaker: ActorRefFactory => ActorRef,
             getSlavesOfMasterSupervisorMaker: ActorRefFactory => ActorRef,
-            forgetRedisNodeSupervisorMaker: ActorRefFactory => ActorRef)
+            forgetRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
+            clusterTopologyMaker: ActorRefFactory => ActorRef)
            (implicit clusterOperations: ClusterOperations): Props =
     Props(new Overseer(joinRedisNodeSupervisorMaker, reshardClusterSupervisorMaker, clusterConnectionsSupervisorMaker,
       clusterReadySupervisorMaker, migrateSlotSupervisorMaker, replicatePoorestMasterSupervisorMaker,
-      failoverSupervisorMaker, getSlavesOfMasterSupervisorMaker, forgetRedisNodeSupervisorMaker)
+      failoverSupervisorMaker, getSlavesOfMasterSupervisorMaker, forgetRedisNodeSupervisorMaker,
+      clusterTopologyMaker)
     )
 
   val name = "overseer"
@@ -120,6 +122,9 @@ object Overseer {
   case class GetSlavesOf(masterUri: RedisURI) extends OverseerCommand
 
   case class GotSlavesOf(masterUri: RedisURI, slaves: List[RedisClusterNode])
+
+  case object LogTopology extends OverseerCommand
+  case object TopologyLogged
 }
 
 /**
@@ -135,7 +140,8 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
                replicatePoorestMasterSupervisorMaker: ActorRefFactory => ActorRef,
                failoverSupervisorMaker: ActorRefFactory => ActorRef,
                getSlavesOfMasterSupervisorMaker: ActorRefFactory => ActorRef,
-               forgetRedisNodeSupervisorMaker: ActorRefFactory => ActorRef)
+               forgetRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
+               clusterTopologyMaker: ActorRefFactory => ActorRef)
               (implicit clusterOperations: ClusterOperations) extends Actor with ActorLogging {
   import MessageBus._
   import Overseer._
@@ -152,10 +158,13 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
   val failoverSupervisor: ActorRef = failoverSupervisorMaker(context)
   val getSlavesOfMasterSupervisor: ActorRef = getSlavesOfMasterSupervisorMaker(context)
   val forgetRedisNodeSupervisor: ActorRef = forgetRedisNodeSupervisorMaker(context)
+  val clusterTopology: ActorRef = clusterTopologyMaker(context)
 
   context.system.eventStream.subscribe(self, classOf[AddNode])
   context.system.eventStream.subscribe(self, classOf[RemoveNode])
   context.system.eventStream.subscribe(self, classOf[Shutdown])
+
+  log.info(s"I'm alive!")
 
   override def supervisorStrategy = OneForOneStrategy() {
     case e: FailedAddingRedisNodeException =>
@@ -190,6 +199,8 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
   private def failingOverForRemovingMaster(uri: RedisURI): Receive = {
     case FailoverComplete =>
       log.info(s"Failover completed successfully, $uri is now a master node")
+      clusterTopology ! LogTopology
+    case TopologyLogged =>
       clusterConnectionsSupervisor ! GetClusterConnections(uri)
       reshardClusterSupervisor ! ReshardWithoutRetiredMaster(uri)
       context.become(computingReshardTableForRemovingMaster(uri))
@@ -198,6 +209,8 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
   private def failingOverForRemovingSlave(uri: RedisURI): Receive = {
     case FailoverComplete =>
       log.info(s"Failover completed successfully, $uri is now a slave node")
+      clusterTopology ! LogTopology
+    case TopologyLogged =>
       val cmd = ForgetNode(uri)
       forgetRedisNodeSupervisor ! cmd
       context.become(forgettingSlaveNode(cmd, uri))
@@ -251,6 +264,7 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
     case ReplicatedMaster(slaveUri) =>
       log.info(s"Successfully replicated master node by new slave node $uri")
       context.system.eventStream.publish(SlaveNodeAdded(slaveUri))
+//      throw KillMeNow()
       context.become(acceptingCommands)
   }
 
@@ -322,6 +336,7 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
     case JobCompleted(job: MigrateSlotsForNewMaster) =>
       log.info(s"Successfully added master node ${job.newMasterUri.toURI}")
       context.system.eventStream.publish(MasterNodeAdded(job.newMasterUri))
+//      throw KillMeNow()
       context.become(acceptingCommands)
   }
 
@@ -384,6 +399,7 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
       log.info(s"Successfully forgot master node ${event.uri}")
       val msg = MasterNodeRemoved(uri)
       context.system.eventStream.publish(msg)
+//      throw KillMeNow()
       context.become(acceptingCommands)
   }
 
@@ -392,6 +408,7 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
       log.info(s"Successfully forgot slave node ${event.uri}")
       val msg = SlaveNodeRemoved(uri)
       context.system.eventStream.publish(msg)
+//      throw KillMeNow()
       context.become(acceptingCommands)
   }
 

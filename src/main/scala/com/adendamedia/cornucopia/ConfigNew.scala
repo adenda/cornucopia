@@ -65,6 +65,11 @@ object ConfigNew {
     val maxNrRetries: Int
   }
 
+  trait ClusterTopologyConfig {
+    val executionContext: ExecutionContext
+    val maxNrRetries: Int
+  }
+
 }
 
 class ConfigNew {
@@ -128,6 +133,11 @@ class ConfigNew {
     object ForgetRedisNode extends ForgetRedisNodeConfig {
       val executionContext: ExecutionContext = actorSystem.dispatcher
       val maxNrRetries: Int = config.getInt("forget.redis.nodes.max.retries")
+    }
+
+    object ClusterTopology extends ClusterTopologyConfig {
+      val executionContext: ExecutionContext = actorSystem.dispatcher
+      val maxNrRetries: Int = config.getInt("cluster.topology.max.retries")
     }
 
   }

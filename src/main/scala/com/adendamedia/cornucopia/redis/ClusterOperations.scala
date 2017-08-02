@@ -55,6 +55,10 @@ object ClusterOperations {
   case class CornucopiaFindPoorestMasterException(message: String, reason: Throwable = None.orNull)
     extends Throwable(message, reason) with Serializable
 
+  @SerialVersionUID(1L)
+  case class CornucopiaGetRedisSourceNodesException(message: String, reason: Throwable = None.orNull)
+    extends Throwable(message, reason) with Serializable
+
   type NodeId = String
   type RedisUriString = String
   type ClusterConnectionsType = Map[NodeId, Connection.Salad]
@@ -227,6 +231,13 @@ trait ClusterOperations {
     */
   def forgetNode(uri: RedisURI)(implicit executionContext: ExecutionContext): Future[Unit]
 
+  /**
+    * Get the cluster topology as it is
+    * @param executionContext The execution context
+    * @return Future on a map of cluster nodes, with keys for `masters` and `slaves`
+    */
+  def getClusterTopology(implicit executionContext: ExecutionContext): Future[Map[String, List[RedisClusterNode]]]
+
 }
 
 object ClusterOperationsImpl extends ClusterOperations {
@@ -294,6 +305,9 @@ object ClusterOperationsImpl extends ClusterOperations {
       logger.debug(s"Reshard cluster with new master source nodes: ${sourceNodes.map(_.getNodeId)}")
 
       sourceNodes
+    } recover {
+      case e =>
+        throw CornucopiaGetRedisSourceNodesException("Could not get redis source nodes", e)
     }
   }
 
@@ -462,7 +476,7 @@ object ClusterOperationsImpl extends ClusterOperations {
     }
 
     migrate map  { _ =>
-      logger.info(s"Successfully migrated slot $slot from $sourceNodeId to $targetNodeId at ${targetRedisURI.getHost}:${targetRedisURI.getPort}")
+      logger.debug(s"Successfully migrated slot $slot from $sourceNodeId to $targetNodeId at ${targetRedisURI.getHost}:${targetRedisURI.getPort}")
     } recoverWith { case e => handleFailedMigration(e) }
   }
 
@@ -665,7 +679,9 @@ object ClusterOperationsImpl extends ClusterOperations {
     val remainingNodes: List[Salad] = connections.filterKeys(_ != removeNodeId).values.toList
 
     removeConnection.clusterReset(hard = true).flatMap { _ =>
-      val results: List[Future[Unit]] = remainingNodes map(_.clusterForget(removeNodeId))
+      val results: List[Future[Unit]] = for {
+        node <- remainingNodes
+      } yield node.clusterForget(removeNodeId) map identity
       Future.fold(results)()((r, _) => r)
     } recover {
       case e: RedisCommandExecutionException => throw e // This isn't likely to happen
@@ -684,10 +700,26 @@ object ClusterOperationsImpl extends ClusterOperations {
       val remainingConnections = nodes.filterNot(_.getNodeId == removeNodeId) map(node => getConnection(node.getNodeId))
 
       newSaladAPI(uri).clusterReset(hard = true).flatMap { _ =>
-        Future.sequence(remainingConnections).map(connection => connection.map(_.clusterForget(removeNodeId)))
+        Future.sequence(remainingConnections).map { connections =>
+          connections.map { conn =>
+            conn.clusterForget(removeNodeId).map(x => x)
+          }
+        }
       } recover {
         case e: RedisCommandExecutionException => throw e // This isn't likely to happen
       }
+    }
+  }
+
+  def getClusterTopology(implicit executionContext: ExecutionContext): Future[Map[String, List[RedisClusterNode]]] = {
+    import com.lambdaworks.redis.models.role.RedisInstance.Role.{MASTER, SLAVE}
+    implicit val saladAPI = newSaladAPI
+
+    saladAPI.clusterNodes map { allNodes =>
+      val masterNodes = allNodes.filter(MASTER == _.getRole)
+      val slaveNodes = allNodes.filter(SLAVE == _.getRole)
+
+      Map("masters" -> masterNodes.toList, "slaves" -> slaveNodes.toList)
     }
   }
 
