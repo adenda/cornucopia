@@ -179,20 +179,24 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
     case m: AddMaster =>
       log.info(s"Received message AddMaster(${m.uri})")
       joinRedisNodeSupervisor ! JoinMasterNode(m.uri)
+      context.unbecome()
       context.become(joiningNode(m.uri))
     case s: AddSlave =>
       log.info(s"Received message AddSlave(${s.uri})")
       joinRedisNodeSupervisor ! JoinSlaveNode(s.uri)
+      context.unbecome()
       context.become(joiningNode(s.uri))
     case rm: RemoveMaster =>
       log.info(s"Received message RemoveMaster(${rm.uri})")
       val msg = FailoverMaster(rm.uri)
       failoverSupervisor ! msg
+      context.unbecome()
       context.become(failingOverForRemovingMaster(rm.uri))
     case rs: RemoveSlave =>
       log.info(s"Receive message RemoveSlave(${rs.uri})")
       val msg = FailoverSlave(rs.uri)
       failoverSupervisor ! msg
+      context.unbecome()
       context.become(failingOverForRemovingSlave(rs.uri))
   }
 
@@ -203,6 +207,7 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
     case TopologyLogged =>
       clusterConnectionsSupervisor ! GetClusterConnections(uri)
       reshardClusterSupervisor ! ReshardWithoutRetiredMaster(uri)
+      context.unbecome()
       context.become(computingReshardTableForRemovingMaster(uri))
   }
 
@@ -213,6 +218,7 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
     case TopologyLogged =>
       val cmd = ForgetNode(uri)
       forgetRedisNodeSupervisor ! cmd
+      context.unbecome()
       context.become(forgettingSlaveNode(cmd, uri))
   }
 
@@ -225,8 +231,10 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
         case Some(table) =>
           val cmd = MigrateSlotsWithoutRetiredMaster(retiredMaster, connections._1, connections._2, table)
           migrateSlotsSupervisor ! cmd
+          context.unbecome()
           context.become(migratingSlotsWithoutRetiredMaster(cmd))
         case None =>
+          context.unbecome()
           context.become(computingReshardTableForRemovingMaster(retiredMaster, Some(connections), None))
       }
     case GotReshardTable(table) =>
@@ -235,8 +243,10 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
         case Some(connections) =>
           val cmd = MigrateSlotsWithoutRetiredMaster(retiredMaster, connections._1, connections._2, table)
           migrateSlotsSupervisor ! cmd
+          context.unbecome()
           context.become(migratingSlotsWithoutRetiredMaster(cmd))
         case None =>
+          context.unbecome()
           context.become(computingReshardTableForRemovingMaster(retiredMaster, None, Some(table)))
       }
   }
@@ -246,10 +256,12 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
       log.info(s"Master Redis node ${masterNodeJoined.uri} successfully joined")
       reshardClusterSupervisor ! ReshardWithNewMaster(uri)
       clusterConnectionsSupervisor ! GetClusterConnections(uri)
+      context.unbecome()
       context.become(reshardingWithNewMaster(uri))
     case slaveNodeJoined: SlaveNodeJoined =>
       log.info(s"Slave Redis node ${slaveNodeJoined.uri} successfully joined")
       clusterConnectionsSupervisor ! GetClusterConnections(uri)
+      context.unbecome()
       context.become(addingSlaveNode(slaveNodeJoined.uri))
   }
 
@@ -260,11 +272,13 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
       val masterConnections = connections._1
       val redisUriToNodeId = connections._2
       replicatePoorestMasterSupervisor ! ReplicatePoorestMasterUsingSlave(uri)
+      context.unbecome()
       context.become(addingSlaveNode(uri, Some(connections)))
     case ReplicatedMaster(slaveUri) =>
       log.info(s"Successfully replicated master node by new slave node $uri")
       context.system.eventStream.publish(SlaveNodeAdded(slaveUri))
 //      throw KillMeNow()
+      context.unbecome()
       context.become(acceptingCommands)
   }
 
@@ -282,16 +296,19 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
         case Some(table) =>
           if (connectionsAreValidForAddingNewMaster(table, connections, uri)) {
             clusterReadySupervisor ! WaitForClusterToBeReady(connections._1)
+            context.unbecome()
             context.become(waitingForClusterToBeReadyForNewMaster(uri, table, connections))
           }
           else {
             log.warning(s"Redis connections are not valid")
-            context.system.scheduler.scheduleOnce(2 seconds) {
-              clusterConnectionsSupervisor ! GetClusterConnections(uri)
-            }
+//            context.system.scheduler.scheduleOnce(2 seconds) {
+            clusterConnectionsSupervisor ! GetClusterConnections(uri)
+//            }
+            context.unbecome()
             context.become(reshardingWithNewMaster(uri, Some(table), None)) // discard invalid connections
           }
         case None =>
+          context.unbecome()
           context.become(reshardingWithNewMaster(uri, None, Some(connections)))
       }
     case GotReshardTable(table) =>
@@ -300,16 +317,19 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
         case Some(connections) =>
           if (connectionsAreValidForAddingNewMaster(table, connections, uri)) {
             clusterReadySupervisor ! WaitForClusterToBeReady(connections._1)
+            context.unbecome()
             context.become(waitingForClusterToBeReadyForNewMaster(uri, table, connections))
           }
           else {
             log.warning(s"Redis connections are not valid")
-            context.system.scheduler.scheduleOnce(2 seconds) {
-              clusterConnectionsSupervisor ! GetClusterConnections(uri)
-            }
+//            context.system.scheduler.scheduleOnce(2 seconds) {
+            clusterConnectionsSupervisor ! GetClusterConnections(uri)
+//            }
+            context.unbecome()
             context.become(reshardingWithNewMaster(uri, Some(table), None)) // discard invalid connections
           }
         case None =>
+          context.unbecome()
           context.become(reshardingWithNewMaster(uri, Some(table), None))
       }
   }
@@ -329,6 +349,7 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
       log.info(s"Cluster is ready, migrating slots")
       val msg = MigrateSlotsForNewMaster(uri, connections._1, connections._2, reshardTable)
       migrateSlotsSupervisor ! msg
+      context.unbecome()
       context.become(migratingSlotsForNewMaster(msg))
   }
 
@@ -337,6 +358,7 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
       log.info(s"Successfully added master node ${job.newMasterUri.toURI}")
       context.system.eventStream.publish(MasterNodeAdded(job.newMasterUri))
 //      throw KillMeNow()
+      context.unbecome()
       context.become(acceptingCommands)
   }
 
@@ -345,6 +367,7 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
       log.info(s"Successfully resharded without retired master node ${job.retiredMasterUri.toURI}")
       val cmd = GetSlavesOf(job.retiredMasterUri)
       getSlavesOfMasterSupervisor ! cmd
+      context.unbecome()
       context.become(gettingSlavesOfMaster(job.retiredMasterUri, cmd, job.connections, job.redisUriToNodeId))
     case _ =>
       log.error("wat42") // TODO: wat
@@ -359,6 +382,7 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
       if (event.slaves.isEmpty) {
         val cmd = ForgetNode(retiredMasterUri)
         forgetRedisNodeSupervisor ! cmd
+        context.unbecome()
         context.become(forgettingMasterNode(cmd, retiredMasterUri))
       }
 
@@ -368,6 +392,7 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
         replicatePoorestMasterSupervisor ! msg
       }
       val slaves = event.slaves.map(_.getUri)
+      context.unbecome()
       context.become(
         replicatingPoorestRemainingMaster(retiredMasterUri, slaves, excludedMaster, connections, redisUriToNodeId)
       )
@@ -384,12 +409,14 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
         case x :: xs =>
           val msg = ReplicatePoorestRemainingMasterUsingSlave(x, excludedMasters)
           replicatePoorestMasterSupervisor ! msg
+          context.unbecome()
           context.become(
             replicatingPoorestRemainingMaster(retiredMasterUri, xs, excludedMasters, connections, redisUriToNodeId)
           )
         case Nil =>
           val cmd = ForgetNode(retiredMasterUri)
           forgetRedisNodeSupervisor ! cmd
+          context.unbecome()
           context.become(forgettingMasterNode(cmd, retiredMasterUri))
       }
   }
@@ -400,6 +427,7 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
       val msg = MasterNodeRemoved(uri)
       context.system.eventStream.publish(msg)
 //      throw KillMeNow()
+      context.unbecome()
       context.become(acceptingCommands)
   }
 
@@ -409,6 +437,7 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
       val msg = SlaveNodeRemoved(uri)
       context.system.eventStream.publish(msg)
 //      throw KillMeNow()
+      context.unbecome()
       context.become(acceptingCommands)
   }
 

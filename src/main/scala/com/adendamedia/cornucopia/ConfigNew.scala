@@ -60,6 +60,7 @@ object ConfigNew {
   trait ForgetRedisNodeConfig {
     val executionContext: ExecutionContext
     val maxNrRetries: Int
+    val refreshTimeout: Int
   }
 
   trait GetSlavesOfMasterConfig {
@@ -137,6 +138,7 @@ class ConfigNew {
     object ForgetRedisNode extends ForgetRedisNodeConfig {
       val executionContext: ExecutionContext = actorSystem.dispatcher
       val maxNrRetries: Int = config.getInt("forget.redis.nodes.max.retries")
+      val refreshTimeout: Int = config.getInt("forget.redis.nodes.refresh.timeout")
     }
 
     object ClusterTopology extends ClusterTopologyConfig {

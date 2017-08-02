@@ -8,6 +8,7 @@ import com.adendamedia.cornucopia.ConfigNew.ForgetRedisNodeConfig
 import com.adendamedia.cornucopia.CornucopiaException._
 import Overseer.OverseerCommand
 import com.lambdaworks.redis.RedisURI
+import scala.concurrent.duration._
 
 import scala.concurrent.ExecutionContext
 
@@ -47,9 +48,12 @@ class ForgetRedisNodeSupervisor(implicit config: ForgetRedisNodeConfig, clusterO
 
   protected def processing(command: OverseerCommand, ref: ActorRef): Receive = {
     case event: NodeForgotten =>
-      log.info(s"Successfully forgot node ${event.uri}")
-      ref ! event
-      context.unbecome()
+      implicit val executionContext: ExecutionContext = config.executionContext
+      context.system.scheduler.scheduleOnce(config.refreshTimeout.seconds) {
+        log.info(s"Successfully forgot node ${event.uri}")
+        ref ! event
+        context.unbecome()
+      }
     case Retry =>
       log.info(s"Retrying to forget redis node")
       forgetRedisNode ! command

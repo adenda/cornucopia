@@ -26,6 +26,7 @@ class ReplicatePoorestMasterTest extends TestKit(ActorSystem("ReplicatePoorestMa
   trait TestConfig {
     implicit object ReplicatePoorestMasterConfigTest extends ReplicatePoorestMasterConfig {
       val executionContext: ExecutionContext = system.dispatcher
+      val maxNrRetries: Int = 2
     }
     implicit val clusterOperations: ClusterOperations = mock[ClusterOperations]
 

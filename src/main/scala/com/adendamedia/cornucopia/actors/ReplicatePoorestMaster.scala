@@ -10,6 +10,7 @@ import com.adendamedia.cornucopia.redis.ClusterOperations.{ClusterConnectionsTyp
 import com.adendamedia.cornucopia.redis.RedisHelpers.RedisClusterConnectionsInvalidException
 import com.lambdaworks.redis.cluster.models.partitions.RedisClusterNode
 import com.lambdaworks.redis.RedisURI
+import scala.concurrent.duration._
 
 import scala.concurrent.ExecutionContext
 
@@ -18,12 +19,15 @@ object ReplicatePoorestMasterSupervisor {
             clusterOperations: ClusterOperations): Props = Props(new ReplicatePoorestMasterSupervisor)
 
   val name = "replicatePoorestMasterSupervisor"
+
+  case object Retry
 }
 
 class ReplicatePoorestMasterSupervisor(implicit config: ReplicatePoorestMasterConfig,
                                        clusterOperations: ClusterOperations) extends CornucopiaSupervisor {
   import Overseer._
   import ClusterOperations._
+  import ReplicatePoorestMasterSupervisor._
 
   override def receive: Receive = accepting
 
@@ -32,6 +36,7 @@ class ReplicatePoorestMasterSupervisor(implicit config: ReplicatePoorestMasterCo
   override def supervisorStrategy = OneForOneStrategy(config.maxNrRetries) {
     case e: CornucopiaFindPoorestMasterException =>
       log.error(s"Failed to find poorest master: {}", e)
+      self ! Retry
       Restart
   }
 
@@ -51,6 +56,9 @@ class ReplicatePoorestMasterSupervisor(implicit config: ReplicatePoorestMasterCo
       log.info(s"Successfully replicated master with new slave: ${msg.newSlaveUri}")
       ref ! msg
       context.unbecome()
+    case Retry =>
+      log.info(s"Retrying to replicate poorest master")
+      findPoorestMaster ! command
   }
 }
 
@@ -66,12 +74,6 @@ class FindPoorestMaster(implicit config: ReplicatePoorestMasterConfig,
   import Overseer._
 
   val replicatePoorestMaster = context.actorOf(ReplicatePoorestMaster.props, ReplicatePoorestMaster.name)
-
-  override def preRestart(reason: Throwable, message: Option[Any]): Unit = {
-    // Retry by sending the same message back to self
-    self ! message.get
-    super.preRestart(reason, message)
-  }
 
   override def receive: Receive = {
     case msg: ReplicatePoorestMasterUsingSlave =>
