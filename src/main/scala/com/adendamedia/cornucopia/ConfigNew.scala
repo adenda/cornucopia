@@ -9,6 +9,8 @@ object ConfigNew {
 
   trait JoinRedisNodeConfig {
     val maxNrRetries: Int
+    val refreshTimeout: Int
+    val executionContext: ExecutionContext
   }
 
   trait ReshardClusterConfig {
@@ -86,6 +88,8 @@ class ConfigNew {
 
     object JoinRedisNode extends JoinRedisNodeConfig {
       val maxNrRetries: Int = config.getInt("join.node.max.retries")
+      val refreshTimeout: Int = config.getInt("join.node.refresh.timeout")
+      val executionContext: ExecutionContext = actorSystem.dispatcher
     }
 
     object ReshardCluster extends ReshardClusterConfig {

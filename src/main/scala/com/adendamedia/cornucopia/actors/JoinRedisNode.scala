@@ -1,15 +1,19 @@
 package com.adendamedia.cornucopia.actors
 
 import akka.actor.SupervisorStrategy.Restart
-import akka.actor.{Actor, ActorLogging, ActorRef, Props, OneForOneStrategy, Terminated}
+import akka.actor.{Actor, ActorLogging, ActorRef, OneForOneStrategy, Props, Terminated}
 import akka.pattern.pipe
 import com.adendamedia.cornucopia.redis.ClusterOperations
 import com.adendamedia.cornucopia.CornucopiaException._
 import Overseer.OverseerCommand
+import com.adendamedia.cornucopia.ConfigNew.JoinRedisNodeConfig
 import com.lambdaworks.redis.RedisURI
 
+import scala.concurrent.ExecutionContext
+import scala.concurrent.duration._
+
 object JoinRedisNodeSupervisor {
-  def props(implicit joinRedisNodeMaxNrRetries: Int, clusterOperations: ClusterOperations) =
+  def props(implicit config: JoinRedisNodeConfig, clusterOperations: ClusterOperations) =
     Props(new JoinRedisNodeSupervisor)
 
   val name = "joinRedisNodeSupervisor"
@@ -19,7 +23,7 @@ object JoinRedisNodeSupervisor {
   * The supervisor actor for the join redis node action is used to signal a failed attempt to join a node by throwing an
   * exception.
   */
-class JoinRedisNodeSupervisor(implicit joinRedisNodeMaxNrRetries: Int,
+class JoinRedisNodeSupervisor(implicit config: JoinRedisNodeConfig,
                               clusterOperations: ClusterOperations) extends Actor with ActorLogging {
   import Overseer._
 
@@ -27,19 +31,20 @@ class JoinRedisNodeSupervisor(implicit joinRedisNodeMaxNrRetries: Int,
   val joinRedisNode = context.actorOf(joinRedisNodeProps, JoinRedisNode.name)
   context.watch(joinRedisNode)
 
-  override def supervisorStrategy = OneForOneStrategy(joinRedisNodeMaxNrRetries) {
+  override def supervisorStrategy = OneForOneStrategy(config.maxNrRetries) {
     case _: FailedOverseerCommand => Restart
   }
 
   override def receive: Receive = {
     case join: JoinNode => joinRedisNode forward join
     case Terminated(_) =>
-      throw FailedAddingRedisNodeException(s"Could not join Redis node to cluster after $joinRedisNodeMaxNrRetries retries")
+      throw FailedAddingRedisNodeException(s"Could not join Redis node to cluster after ${config.maxNrRetries} retries")
   }
 }
 
 object JoinRedisNode {
-  def props(implicit clusterOperations: ClusterOperations): Props = Props(new JoinRedisNode)
+  def props(implicit clusterOperations: ClusterOperations, config: JoinRedisNodeConfig): Props =
+    Props(new JoinRedisNode)
 
   val name = "joinRedisNode"
 
@@ -51,7 +56,9 @@ object JoinRedisNode {
   case object AddingSlaveNode extends AddingNodeType
 }
 
-class JoinRedisNode(implicit clusterOperations: ClusterOperations) extends Actor with ActorLogging {
+class JoinRedisNode(implicit clusterOperations: ClusterOperations, config: JoinRedisNodeConfig)
+  extends Actor with ActorLogging {
+
   import Overseer._
   import JoinRedisNode._
 
@@ -88,11 +95,17 @@ class JoinRedisNode(implicit clusterOperations: ClusterOperations) extends Actor
       log.info("passthrough")
       nodeType match {
         case AddingMasterNode =>
-          ref ! MasterNodeJoined(uri)
-          context.become(accepting)
+          implicit val executionContext: ExecutionContext = config.executionContext
+          context.system.scheduler.scheduleOnce(config.refreshTimeout.seconds) {
+            ref ! MasterNodeJoined(uri)
+            context.become(accepting)
+          }
         case AddingSlaveNode =>
-          ref ! SlaveNodeJoined(uri)
-          context.become(accepting)
+          implicit val executionContext: ExecutionContext = config.executionContext
+          context.system.scheduler.scheduleOnce(config.refreshTimeout.seconds) {
+            ref ! SlaveNodeJoined(uri)
+            context.become(accepting)
+          }
       }
   }
 

@@ -9,7 +9,7 @@ object Cornucopia {
   import ConfigNew._
 
   trait JoinRedisNode {
-    implicit val maxNrRetries: Int
+    implicit val joinRedisNodeConfig: JoinRedisNodeConfig
     implicit val clusterOperations: ClusterOperations
     val factory: ActorRefFactory => ActorRef
   }
@@ -78,7 +78,7 @@ class Cornucopia {
   private val redisHelpersImpl: RedisHelpers = RedisHelpersImpl
 
   object JoinRedisNodeImpl extends JoinRedisNode {
-    implicit val maxNrRetries: Int = config.Cornucopia.JoinRedisNode.maxNrRetries
+    implicit val joinRedisNodeConfig: JoinRedisNodeConfig = config.Cornucopia.JoinRedisNode
     implicit val clusterOperations: ClusterOperations = clusterOperationsImpl
     val factory: ActorRefFactory => ActorRef =
       (f: ActorRefFactory) => f.actorOf(JoinRedisNodeSupervisor.props, JoinRedisNodeSupervisor.name)
