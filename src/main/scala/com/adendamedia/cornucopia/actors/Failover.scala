@@ -99,6 +99,7 @@ class GetRole(supervisor: ActorRef)
 
   override def receive: Receive = {
     case msg: FailoverCommand =>
+      log.info(s"Getting node role for doing failover")
       getRole(msg, sender)
     case e: KillChild =>
       log.error(s"Failed getting role", e)
@@ -146,6 +147,7 @@ class Failover(supervisor: ActorRef)
         log.info(s"Not doing failover because the node ${msg.uri} is already a master")
         supervisor ! FailoverComplete
       case Slave =>
+        log.info(s"Doing failover now")
         failoverWorker forward msg
     }
     case DoFailover(msg: FailoverSlave, nodeRole: Role) => nodeRole match {
@@ -216,6 +218,7 @@ class FailoverWorker(supervisor: ActorRef)(implicit config: FailoverConfig, clus
   }
 
   private def failoverMaster(msg: FailoverMaster) = {
+    log.info(s"Failing over master now")
     implicit val executionContext: ExecutionContext = config.executionContext
     clusterOperations.failoverMaster(msg.uri) map (_ => VerifyFailoverCommand(msg)) recover {
       case e => self ! KillChild(msg, Some(e))
@@ -223,6 +226,7 @@ class FailoverWorker(supervisor: ActorRef)(implicit config: FailoverConfig, clus
   }
 
   private def failoverSlave(msg: FailoverSlave) = {
+    log.info(s"Failing over slave now")
     implicit val executionContext: ExecutionContext = config.executionContext
     clusterOperations.failoverSlave(msg.uri) map (_ => VerifyFailoverCommand(msg)) recover {
       case e => self ! KillChild(msg, Some(e))
@@ -247,10 +251,15 @@ class VerifyFailover(supervisor: ActorRef)(implicit config: FailoverConfig, clus
   import ClusterOperations.{Role, Master, Slave}
 
   override def receive: Receive = {
-    case msg: VerifyFailoverCommand => msg.command match {
-      case FailoverMaster(_) => verify(msg, Master, sender)
-      case FailoverSlave(_) => verify(msg, Slave, sender)
-    }
+    case msg: VerifyFailoverCommand =>
+      msg.command match {
+        case FailoverMaster(_) =>
+          log.info(s"Successfully failed over master, waiting for it to propagate")
+          verify(msg, Master, sender)
+        case FailoverSlave(_) =>
+          log.info(s"Successfully failed over slave, waiting for it to propagate")
+          verify(msg, Slave, sender)
+      }
     case kill: KillChild =>
       val e = kill.reason.getOrElse(new Exception)
       log.error(s"Failed verifying failover", e)
@@ -261,7 +270,9 @@ class VerifyFailover(supervisor: ActorRef)(implicit config: FailoverConfig, clus
     implicit val executionContext: ExecutionContext = config.executionContext
     val uri = msg.command.uri
     clusterOperations.verifyFailover(uri, role) map {
-      case true => VerificationSuccess
+      case true =>
+        log.info(s"Failover completed")
+        VerificationSuccess
       case false => VerificationFailed(msg)
     } recover {
       case e => self ! KillChild(msg.command, Some(e))
