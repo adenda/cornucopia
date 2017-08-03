@@ -189,7 +189,7 @@ class MigrateSlotsJobManager(migrateSlotWorkerMaker: (ActorRefFactory, ActorRef)
           if (pendingSlots.isEmpty && runningSlots.isEmpty) finishJob(cmd, ref, workers)
       }
     case JobCompleted(job: MigrateSlotJob) =>
-      log.info(s"Successfully migrated slot ${job.slot} from $retiredNodeId to ${job.targetNodeId}")
+      log.debug(s"Successfully migrated slot ${job.slot} from $retiredNodeId to ${job.targetNodeId}")
       val migratedSlot: MigrateSlotJobType = (job.targetNodeId, job.slot)
       val updatedCompletedSlots = completedSlots + migratedSlot
       val updatedRunningSlots = runningSlots - migratedSlot
@@ -233,7 +233,7 @@ class MigrateSlotsJobManager(migrateSlotWorkerMaker: (ActorRefFactory, ActorRef)
           if (pendingSlots.isEmpty && runningSlots.isEmpty) finishJob(cmd, ref, workers)
       }
     case JobCompleted(job: MigrateSlotJob) =>
-      log.info(s"Successfully migrated slot ${job.slot} from ${job.sourceNodeId} to $targetNodeId")
+      log.debug(s"Successfully migrated slot ${job.slot} from ${job.sourceNodeId} to $targetNodeId")
       val migratedSlot: MigrateSlotJobType = (job.sourceNodeId, job.slot)
       val updatedCompletedSlots = completedSlots + migratedSlot
       val updatedRunningSlots = runningSlots - migratedSlot
@@ -336,7 +336,9 @@ class SetSlotAssignmentWorker(topLevelWorker: ActorRef)
 
   override def receive: Receive = {
     case job: MigrateSlotJob => doJob(job)
-    case e: KillChild => throw MigrateSlotsException(e.command, e.reason)
+    case e: KillChild =>
+      log.error(s"Error migrating slot {}", e.reason.getOrElse(new Exception("Unknown error")))
+      throw MigrateSlotsException(e.command, e.reason)
   }
 
   private def doJob(job: MigrateSlotJob) = {
@@ -347,7 +349,10 @@ class SetSlotAssignmentWorker(topLevelWorker: ActorRef)
     clusterOperations.setSlotAssignment(job.slot, job.sourceNodeId, job.targetNodeId, job.connections) map { _ =>
       job
     } recover {
-      case e: SetSlotAssignmentException => self ! KillChild(command = job, reason = Some(e))
+      case e: SetSlotAssignmentException =>
+        self ! KillChild(command = job, reason = Some(e))
+      case _ =>
+        log.error(s"wat")
     } pipeTo migrateSlotKeysWorker
   }
 
@@ -381,7 +386,7 @@ class MigrateSlotKeysWorker(topLevelWorker: ActorRef)
   }
 
   private def doJob(job: MigrateSlotJob) = {
-    log.info(s"Migrating slot keys for slot ${job.slot} from ${job.sourceNodeId} to ${job.targetNodeId}")
+    log.debug(s"Migrating slot keys for slot ${job.slot} from ${job.sourceNodeId} to ${job.targetNodeId}")
 
     implicit val executionContext = config.executionContext
     clusterOperations.migrateSlotKeys(job.slot, job.redisURI.get, job.sourceNodeId, job.targetNodeId, job.connections) map { _ =>
@@ -389,7 +394,6 @@ class MigrateSlotKeysWorker(topLevelWorker: ActorRef)
     } recover {
       case e: MigrateSlotKeysMovedException =>
         log.debug(s"Slot keys moved, moving along: ", e.reason)
-        log.info(s"")
         notifySlotAssignmentWorker ! job
       case e =>
         self ! KillChild(command = job, reason = Some(e))
@@ -419,7 +423,7 @@ class NotifySlotAssignmentWorker(topLevelWorker: ActorRef)
   }
 
   private def doJob(job: MigrateSlotJob) = {
-    log.info(s"Notifying slot assignment for slot ${job.slot} which now lives on node ${job.targetNodeId}")
+    log.debug(s"Notifying slot assignment for slot ${job.slot} which now lives on node ${job.targetNodeId}")
 
     implicit val executionContext = config.executionContext
     clusterOperations.notifySlotAssignment(job.slot, job.targetNodeId, job.connections) map { _ =>
