@@ -34,7 +34,7 @@ class OverseerTest extends TestKit(testSystem)
     val redisURI: RedisURI = RedisURI.create(uriString)
     implicit object JoinRedisNodeConfigTest extends JoinRedisNodeConfig {
       val executionContext: ExecutionContext = system.dispatcher
-      val maxNrRetries: Int = 10
+      val maxNrRetries: Int = 2
       val refreshTimeout: Int = 0
     }
     implicit val joinRedisNodeMaxNrRetries: Int = 2
@@ -119,17 +119,17 @@ class OverseerTest extends TestKit(testSystem)
   }
 
   "Overseer" must {
-    "retry joining node to cluster if it fails" in new FailureTest {
+    "010 - retry joining node to cluster if it fails" in new FailureTest {
       val expectedErrorMessage =
         s"Failed to join node ${redisURI.toURI} with error: $cornucopiaRedisConnectionExceptionMessage"
 
-      EventFilter.error(message = expectedErrorMessage,
+      EventFilter.error(pattern = expectedErrorMessage,
         occurrences = joinRedisNodeMaxNrRetries + 1) intercept {
           system.eventStream.publish(addMasterNodeMessage)
         }
     }
 
-    "fail to join node to cluster after maximum number of retries is reached" in new FailureTest {
+    "012 - fail to join node to cluster after maximum number of retries is reached" in new FailureTest {
       val expectedErrorMessage =
         s"Could not join Redis node to cluster after $joinRedisNodeMaxNrRetries retries: Restarting child actor"
 
@@ -139,7 +139,7 @@ class OverseerTest extends TestKit(testSystem)
       }
     }
 
-    "publish to event bus when it fails to add a node to the cluster" in new FailureTest {
+    "014 - publish to event bus when it fails to add a node to the cluster" in new FailureTest {
       val probe = TestProbe()
 
       system.eventStream.subscribe(probe.ref, classOf[FailedAddingMasterRedisNode])
@@ -153,19 +153,19 @@ class OverseerTest extends TestKit(testSystem)
       probe.expectMsg(msg)
     }
 
-    "succeed joining master node to cluster" in new SuccessTest {
+    "015 - succeed joining master node to cluster" in new SuccessTest {
       joinRedisNodeSupervisor ! JoinMasterNode(redisURI)
 
       expectMsg(MasterNodeJoined(redisURI))
     }
 
-    "succeed joining slave node to cluster" in new SuccessTest {
+    "016 - succeed joining slave node to cluster" in new SuccessTest {
       joinRedisNodeSupervisor ! JoinSlaveNode(redisURI)
 
       expectMsg(SlaveNodeJoined(redisURI))
     }
 
-    "receive add master node task from message bus and tell JoinRedisNodeSupervisor actor with JoinMasterNode command" in new Test {
+    "017 - receive add master node task from message bus and tell JoinRedisNodeSupervisor actor with JoinMasterNode command" in new Test {
       import Overseer._
       import MessageBus._
 
@@ -196,7 +196,7 @@ class OverseerTest extends TestKit(testSystem)
       }
     }
 
-    "receive add slave node task from the message bus and tell JoinRedisNodeSupervisor actor with JoinMasterNode command" in new Test {
+    "019 - receive add slave node task from the message bus and tell JoinRedisNodeSupervisor actor with JoinMasterNode command" in new Test {
       import Overseer._
       import MessageBus._
 
@@ -226,7 +226,7 @@ class OverseerTest extends TestKit(testSystem)
       }
     }
 
-    "tell reshard cluster supervisor to reshard with new master after master node is joined to cluster" in new Test {
+    "100 - tell reshard cluster supervisor to reshard with new master after master node is joined to cluster" in new Test {
       import Overseer._
 
       val probe = TestProbe()
@@ -290,6 +290,7 @@ class OverseerTest extends TestKit(testSystem)
 
       overseer ! RemoveMaster(redisURI)
       overseer ! FailoverComplete
+      overseer ! TopologyLogged
       overseer ! GotClusterConnections(dummyConnections, testRedisUriToNodeId)
       overseer ! GotReshardTable(reshardTableMockEmpty)
       overseer ! JobCompleted(migrateMessage)
@@ -334,6 +335,7 @@ class OverseerTest extends TestKit(testSystem)
 
       overseer ! RemoveSlave(redisURI)
       overseer ! FailoverComplete
+      overseer ! TopologyLogged
       overseer ! NodeForgotten(redisURI)
 
       val msg = SlaveNodeRemoved(redisURI)
