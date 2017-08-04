@@ -9,6 +9,7 @@ import com.adendamedia.cornucopia.redis.{ClusterOperations, ReshardTableNew}
 import com.adendamedia.cornucopia.CornucopiaException._
 import com.adendamedia.cornucopia.ConfigNew.ReshardClusterConfig
 import Overseer.{GotReshardTable, OverseerCommand, ReshardWithNewMaster}
+import com.adendamedia.cornucopia.redis.ClusterOperations.CornucopiaGetRedisSourceNodesException
 
 import scala.concurrent.duration._
 import scala.concurrent.{ExecutionContext, Future}
@@ -46,7 +47,9 @@ class ReshardClusterSupervisor(computeReshardTableMaker: ActorRefFactory => Acto
   context.watch(getRedisSourceNodes)
 
   override def supervisorStrategy = OneForOneStrategy(config.maxNrRetries) {
-    case _: FailedOverseerCommand => Restart
+    case _: FailedOverseerCommand =>
+      self ! Retry
+      Restart
     case _: ReshardTableException =>
       self ! Retry
       Restart
@@ -122,10 +125,14 @@ class GetRedisSourceNodes(computeReshardTableMaker: ActorRefFactory => ActorRef)
     case table: GotReshardTable =>
       ref ! table
       context.unbecome()
+    case kill: KillChild =>
+      val e = kill.reason.getOrElse(new Exception("An unknown error occurred"))
+      log.error("Error getting redis source nodes: {}", e)
+      throw FailedOverseerCommand(kill.command)
   }
 
   private def getRedisTargetNodesAndRetiredNode(reshard: ReshardWithoutRetiredMaster) = {
-    var uri = reshard.uri
+    val uri = reshard.uri
     clusterOperations.getRedisTargetNodesAndRetiredNode(uri) map { case (ts: List[RedisClusterNode], s: RedisClusterNode) =>
       TargetNodesAndSourceNode(ts, s, uri)
     } pipeTo computeReshardTable
@@ -134,7 +141,11 @@ class GetRedisSourceNodes(computeReshardTableMaker: ActorRefFactory => ActorRef)
   private def getRedisSourceNodes(reshard: ReshardWithNewMaster) = {
     val uri = reshard.uri
     clusterOperations.getRedisSourceNodes(uri) map { sourceNodes =>
+      log.info(s"Got redis source nodes: ${sourceNodes.map(_.getNodeId)}")
       (reshard.uri, SourceNodes(sourceNodes))
+    } recover {
+      case e: CornucopiaGetRedisSourceNodesException =>
+        self ! KillChild(reshard, Some(e))
     } pipeTo computeReshardTable
   }
 
