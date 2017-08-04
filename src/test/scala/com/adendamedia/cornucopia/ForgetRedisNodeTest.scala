@@ -34,6 +34,7 @@ class ForgetRedisNodeTest extends TestKit(testSystem)
     implicit object ForgetRedisNodeConfigTest extends ForgetRedisNodeConfig {
       val executionContext: ExecutionContext = system.dispatcher
       val maxNrRetries: Int = 2
+      val refreshTimeout: Int = 0
     }
     val uriString: String = "redis://192.168.0.100"
     val redisURI: RedisURI = RedisURI.create(uriString)
