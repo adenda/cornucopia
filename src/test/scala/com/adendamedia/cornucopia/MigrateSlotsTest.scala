@@ -138,7 +138,7 @@ class MigrateSlotsTest extends TestKit(testSystem)
 
       val pat = s"Successfully migrated slot \\d from node\\d to $testTargetNodeId"
 
-      EventFilter.info(pattern = pat,
+      EventFilter.debug(pattern = pat,
         occurrences = 7) intercept {
         migrateSlotsJobManager ! msg
       }
@@ -152,7 +152,7 @@ class MigrateSlotsTest extends TestKit(testSystem)
 
       val pat = s"Successfully migrated slot \\d from $testTargetNodeId to node\\d"
 
-      EventFilter.info(pattern = pat,
+      EventFilter.debug(pattern = pat,
         occurrences = 7) intercept {
         migrateSlotsJobManager ! msg
       }
@@ -177,8 +177,10 @@ object MigrateSlotsTest {
   val testSystem = {
     val config = ConfigFactory.parseString(
       """
+         akka.loglevel = "DEBUG"
          akka.loggers = [akka.testkit.TestEventListener]
       """)
     ActorSystem("MigrateSlotsTest", config)
   }
 }
+
