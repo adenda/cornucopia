@@ -23,5 +23,8 @@ object CornucopiaException {
   @SerialVersionUID(1L)
   case class MigrateSlotsException(command: OverseerCommand, reason: Option[Throwable])
     extends Exception with Serializable
+
+  @SerialVersionUID(1L)
+  case class KillMeNow(message: String = "Kill me now") extends Exception(message: String) with Serializable
 }
 
