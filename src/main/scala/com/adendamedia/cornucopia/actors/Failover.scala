@@ -195,12 +195,14 @@ class FailoverWorker(supervisor: ActorRef)(implicit config: FailoverConfig, clus
   private def failingOver(retries: Int): Receive = {
     case VerificationSuccess =>
       supervisor ! FailoverComplete
+      context.unbecome()
     case msg: VerificationFailed =>
       val cmd = msg.command
       val attempts = config.maxNrAttemptsToVerify
       if (retries >= attempts)
         throw CornucopiaFailoverVerificationFailedException(s"Failed verifying failover by exceeding maximum retry attempts of $attempts")
       scheduleVerifyFailover(cmd)
+      context.unbecome()
       context.become(failingOver(retries + 1))
     case kill: KillChild =>
       val e = kill.reason.getOrElse(new Exception("An unknown error occurred"))
