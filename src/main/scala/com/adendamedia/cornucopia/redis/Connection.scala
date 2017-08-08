@@ -46,6 +46,31 @@ object Connection {
     new SaladClusterAPI(connection.async())
   }
 
+  def newSalad: SaladAPI = newSalad(nodes)
+  def newSalad(redisURI: RedisURI): SaladAPI = newSalad(List(redisURI))
+  def newSalad(redisURI: List[RedisURI]): SaladAPI = {
+    val client = RedisClusterClient.create(redisURI.asJava)
+    SaladAPI(client)
+  }
+
+  case class SaladAPI(private val redisClusterClient: RedisClusterClient) {
+    def shutdown(): Unit = redisClusterClient.shutdown()
+
+    private lazy val api: Salad = {
+      val topologyRefreshOptions = ClusterTopologyRefreshOptions.builder()
+        .enableAllAdaptiveRefreshTriggers()
+        .build()
+      redisClusterClient.setOptions(ClusterClientOptions.builder()
+        .topologyRefreshOptions(topologyRefreshOptions)
+        .build())
+      val connection = redisClusterClient.connect(ByteArrayCodec.INSTANCE)
+      connection.setReadFrom(ReadFrom.MASTER)
+      new SaladClusterAPI(connection.async())
+    }
+
+    def apply(): Salad = api
+  }
+
   /**
     * Get a connection to one node in the cluster.
     * @param redisURI

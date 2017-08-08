@@ -90,7 +90,7 @@ trait ClusterOperations {
 
   def getRedisMasterNodes(implicit executionContext: ExecutionContext): Future[List[RedisClusterNode]]
 
-  def getClusterConnections(implicit executionContext: ExecutionContext): Future[(ClusterConnectionsType, RedisUriToNodeId)]
+  def getClusterConnections(implicit executionContext: ExecutionContext): Future[(ClusterConnectionsType, RedisUriToNodeId, SaladAPI)]
 
   /**
     * Checks if the cluster status of all Redis node connections is "OK"
@@ -254,24 +254,29 @@ object ClusterOperationsImpl extends ClusterOperations {
     * @return The URI of the node that was added.
     */
   def addNodeToCluster(redisURI: RedisURI)(implicit executionContext: ExecutionContext): Future[RedisURI] = {
-    implicit val saladAPI = newSaladAPI
+    val saladAPI = newSalad
 
     def getRedisConnection(nodeId: String): Future[Salad] = {
+      implicit val salad = saladAPI()
       getConnection(nodeId).recoverWith {
-        case e: RedisException => throw CornucopiaRedisConnectionException(s"Add nodes to cluster failed to get connection to node", e)
+        case e: RedisException =>
+          saladAPI.shutdown()
+          throw CornucopiaRedisConnectionException(s"Add nodes to cluster failed to get connection to node", e)
       }
     }
 
-    saladAPI.clusterNodes.flatMap { allNodes =>
+    saladAPI().clusterNodes.flatMap { allNodes =>
       val getConnectionsToLiveNodes = allNodes.filter(_.isConnected).map(node => getRedisConnection(node.getNodeId))
-
       Future.sequence(getConnectionsToLiveNodes).flatMap { connections =>
         val metResults = for {
           conn <- connections
         } yield {
           conn.clusterMeet(redisURI)
         }
-        Future.sequence(metResults).map(_ => redisURI)
+        Future.sequence(metResults).map { _ =>
+          saladAPI.shutdown()
+          redisURI
+        }
       }
     }
 
@@ -285,10 +290,11 @@ object ClusterOperationsImpl extends ClusterOperations {
     */
   def getRedisSourceNodes(targetRedisURI: RedisURI)
                          (implicit executionContext: ExecutionContext): Future[List[RedisClusterNode]] = {
-    val saladAPI = newSaladAPI
+    val saladAPI = newSalad
 
-    saladAPI.masterNodes.map { masters =>
+    saladAPI().masterNodes.map { masters =>
       val masterNodes = masters.toList
+      newSalad.shutdown()
 
       logger.debug(s"Reshard table with new master nodes: ${masterNodes.map(_.getNodeId)}")
 
@@ -314,10 +320,11 @@ object ClusterOperationsImpl extends ClusterOperations {
   def getRedisTargetNodesAndRetiredNode(retiredRedisURI: RedisURI)
                                        (implicit executionContext: ExecutionContext):
   Future[(List[RedisClusterNode], RedisClusterNode)] = {
-    val saladAPI = newSaladAPI
+    val saladAPI = newSalad
 
-    saladAPI.masterNodes.map { masters =>
+    saladAPI().masterNodes.map { masters =>
       val masterNodes = masters.toList
+      saladAPI.shutdown()
 
       val liveMasters = masterNodes.filter(_.isConnected)
 
@@ -335,11 +342,12 @@ object ClusterOperationsImpl extends ClusterOperations {
     * @return Future of a list of redis master nodes
     */
   def getRedisMasterNodes(implicit executionContext: ExecutionContext): Future[List[RedisClusterNode]] = {
-    val saladAPI = newSaladAPI
+    val saladAPI = newSalad
 
-    saladAPI.masterNodes.map { masters =>
+    saladAPI().masterNodes.map { masters =>
       val masterNodes = masters.toList
       val liveMasters = masterNodes.filter(_.isConnected)
+      saladAPI.shutdown()
       liveMasters
     }
   }
@@ -349,13 +357,15 @@ object ClusterOperationsImpl extends ClusterOperations {
     * @param executionContext Execution context
     * @return Future of the cluster connections to master nodes
     */
-  def getClusterConnections(implicit executionContext: ExecutionContext): Future[(ClusterConnectionsType, RedisUriToNodeId)] = {
+  def getClusterConnections(implicit executionContext: ExecutionContext): Future[(ClusterConnectionsType, RedisUriToNodeId, SaladAPI)] = {
 
-    implicit val saladAPI = newSaladAPI
+    implicit val saladAPI = newSalad
 
-    val liveMasters: Future[List[RedisClusterNode]] = saladAPI.masterNodes.map { masters =>
+    val liveMasters: Future[List[RedisClusterNode]] = saladAPI().masterNodes.map { masters =>
       masters.toList.filter(_.isConnected)
     }
+
+    implicit val salad = saladAPI()
 
     val connections: Future[List[(RedisClusterNode, Future[Connection.Salad])]] = for {
       masters <- liveMasters
@@ -379,7 +389,7 @@ object ClusterOperationsImpl extends ClusterOperations {
     }
 
     val zero = (Map.empty[NodeId, Connection.Salad], Map.empty[RedisUriString, NodeId])
-    result.map { cs =>
+    val results = result.map { cs =>
       cs.foldLeft(zero) { case ((connectionMap, uriMap), tuple) =>
         tuple match {
           case ((nodeId: NodeId, uri: RedisUriString), conn: Connection.Salad) =>
@@ -387,6 +397,7 @@ object ClusterOperationsImpl extends ClusterOperations {
         }
       }
     }
+    results map { case (clusterConnections, uriToNodeId) => (clusterConnections, uriToNodeId, saladAPI) }
   }
 
   def isClusterReady(clusterConnections: ClusterConnectionsType)
@@ -515,16 +526,29 @@ object ClusterOperationsImpl extends ClusterOperations {
     } map(_.groupBy(identity).mapValues(_.size)) map(_.min)
 
     poorestMaster recover {
-      case e => throw CornucopiaFindPoorestMasterException("Could not find a poorest master", e)
+      case e =>
+        throw CornucopiaFindPoorestMasterException("Could not find a poorest master", e)
     }
 
-    poorestMaster.map(_._1) recover {
-      case e => throw CornucopiaFindPoorestMasterException("Could not find a poorest master", e)
+    poorestMaster.map { case (nodeId, _) =>
+      nodeId
+    } recover {
+      case e =>
+        throw CornucopiaFindPoorestMasterException("Could not find a poorest master", e)
     }
   }
 
   def findPoorestMaster(implicit executionContext: ExecutionContext): Future[NodeId] = {
-    getClusterConnections.flatMap { case (connections, _) => findPoorestMaster(connections) }
+    getClusterConnections.flatMap { case (connections, _, salad) =>
+      findPoorestMaster(connections) map { nodeId =>
+        salad.shutdown()
+        nodeId
+      } recover {
+        case e =>
+          salad.shutdown()
+          throw e
+      }
+    }
   }
 
   def findPoorestRemainingMaster(clusterConnections: ClusterConnectionsType, excludedMasters: List[RedisURI])
@@ -565,8 +589,15 @@ object ClusterOperationsImpl extends ClusterOperations {
   def findPoorestRemainingMaster(excludedMasters: List[RedisURI])
                                 (implicit executionContext: ExecutionContext): Future[NodeId] = {
 
-    getClusterConnections.flatMap { case (connections, _) =>
-      findPoorestRemainingMaster(connections, excludedMasters)
+    getClusterConnections.flatMap { case (connections, _, salad) =>
+      findPoorestRemainingMaster(connections, excludedMasters) map { x =>
+        salad.shutdown()
+        x
+      } recover {
+        case e =>
+          salad.shutdown()
+          throw e
+      }
     }
   }
 
@@ -591,46 +622,58 @@ object ClusterOperationsImpl extends ClusterOperations {
 
   def replicateMaster(slaveUri: RedisURI, masterNodeId: NodeId)
                      (implicit executionContext: ExecutionContext): Future[Unit] = {
-    implicit val saladAPI = newSaladAPI(slaveUri)
-    saladAPI.clusterNodes.flatMap { clusterNodes =>
-      val slaveNodeId = clusterNodes.toList.filter(node => node.getUri == slaveUri).map(_.getNodeId).headOption.getOrElse(
+    val saladAPI = newSalad(slaveUri)
+    saladAPI().clusterNodes.flatMap { clusterNodes =>
+      val slaveNodeId = clusterNodes.toList.filter(node => node.getUri == slaveUri).map(_.getNodeId).headOption.getOrElse {
+        saladAPI.shutdown()
         throw ReplicateMasterException(s"Could not get connection to slave node $slaveUri")
-      )
-      getConnection(slaveNodeId) map(_.clusterReplicate(masterNodeId))
+      }
+      implicit val salad = saladAPI()
+      getConnection(slaveNodeId) map { conn =>
+        conn.clusterReplicate(masterNodeId).map(_ => saladAPI.shutdown())
+      }
     }
   }
 
   def getRole(uri: RedisURI)(implicit executionContext: ExecutionContext): Future[Role] = {
     import com.lambdaworks.redis.models.role.RedisInstance.Role.{MASTER, SLAVE}
-    implicit val saladAPI = newSaladAPI
+    implicit val saladAPI = newSalad
 
-    val result = saladAPI.clusterNodes map { nodes =>
+    val result = saladAPI().clusterNodes map { nodes =>
       for {
         node <- nodes.toList if node.getUri == uri
-      } yield node.getRole match {
-        case MASTER => Master
-        case SLAVE => Slave
-        case other => throw CornucopiaGetRoleException(s"Invalid role: $other")
+      } yield {
+        saladAPI.shutdown()
+        node.getRole match {
+          case MASTER => Master
+          case SLAVE => Slave
+          case other =>
+            throw CornucopiaGetRoleException(s"Invalid role: $other")
+        }
       }
     } recover {
-      case e: Throwable => throw CornucopiaGetRoleException(s"Something bad happened", e)
+      case e: Throwable =>
+        saladAPI.shutdown()
+        throw CornucopiaGetRoleException(s"Something bad happened", e)
     }
 
     result.map(_.headOption.getOrElse(throw CornucopiaGetRoleException(s"Could not get role")))
   }
 
   def failoverMaster(uri: RedisURI)(implicit executionContext: ExecutionContext): Future[Unit] = {
-    implicit val saladAPI = newSaladAPI(uri)
+    implicit val saladAPI = newSalad(uri)
 
-    saladAPI.clusterFailover() map identity recover {
-      case e => throw CornucopiaFailoverException(s"Could not fail over slave $uri", e)
+    saladAPI().clusterFailover() map { x => saladAPI.shutdown(); x } recover {
+      case e =>
+        saladAPI.shutdown()
+        throw CornucopiaFailoverException(s"Could not fail over slave $uri", e)
     }
   }
 
   def failoverSlave(uri: RedisURI)(implicit executionContext: ExecutionContext): Future[Unit] = {
-    implicit val saladAPI = newSaladAPI
+    implicit val saladAPI = newSalad
 
-    saladAPI.clusterNodes map { clusterNodes =>
+    saladAPI().clusterNodes map { clusterNodes =>
       val nodes = clusterNodes.toList
 
       val masterNodeId: NodeId = nodes.find(_.getUri == uri).getOrElse(
@@ -641,23 +684,25 @@ object ClusterOperationsImpl extends ClusterOperations {
         throw CornucopiaFailoverException(s"Could not get slave node to fail over master node $uri")
       ).getNodeId
 
-      getConnection(slaveNodeId).flatMap(_.clusterFailover() map identity) recover { case e =>
+      implicit val salad = saladAPI()
+
+      getConnection(slaveNodeId).flatMap(_.clusterFailover() map(_ => saladAPI.shutdown())) recover { case e =>
+        saladAPI.shutdown()
         throw CornucopiaFailoverException(s"Could not fail over slave $slaveNodeId of master $uri", e)
       }
     }
   }
 
   def verifyFailover(uri: RedisURI, role: Role)(implicit executionContext: ExecutionContext): Future[Boolean] = {
-    implicit val saladAPI = newSaladAPI
-
     getRole(uri) map(_ == role)
   }
 
   def getSlavesOfMaster(uri: RedisURI)(implicit executionContext: ExecutionContext): Future[List[RedisClusterNode]] = {
-    implicit val saladAPI = newSaladAPI
+    implicit val saladAPI = newSalad
 
-    saladAPI.clusterNodes map { clusterNodes =>
+    saladAPI().clusterNodes map { clusterNodes =>
       val nodes = clusterNodes.toList
+      saladAPI.shutdown()
       for {
         master <- nodes if master.getUri == uri
         slave <- nodes if slave.getSlaveOf == master.getNodeId
@@ -690,34 +735,38 @@ object ClusterOperationsImpl extends ClusterOperations {
   }
 
   def forgetNode(uri: RedisURI)(implicit executionContext: ExecutionContext): Future[Unit] = {
-    implicit val saladAPI = newSaladAPI
+    implicit val saladAPI = newSalad
 
-    saladAPI.clusterNodes map { clusterNodes =>
+    saladAPI().clusterNodes map { clusterNodes =>
       val nodes = clusterNodes.toList
       val removeNodeId: NodeId = nodes.find(_.getUri == uri).map(_.getNodeId).getOrElse(
         throw CornucopiaForgetNodeException(s"Could not find the redis node to remove $uri")
       )
+      implicit val salad = saladAPI()
       val remainingConnections = nodes.filterNot(_.getNodeId == removeNodeId) map(node => getConnection(node.getNodeId))
 
       newSaladAPI(uri).clusterReset(hard = true).flatMap { _ =>
         Future.sequence(remainingConnections).map { connections =>
           connections.map { conn =>
-            conn.clusterForget(removeNodeId).map(x => x)
+            conn.clusterForget(removeNodeId).map(identity)
           }
-        }
+        } map (_ => saladAPI.shutdown())
       } recover {
-        case e: RedisCommandExecutionException => throw e // This isn't likely to happen
+        case e: RedisCommandExecutionException =>
+          saladAPI.shutdown()
+          throw e // This isn't likely to happen
       }
     }
   }
 
   def getClusterTopology(implicit executionContext: ExecutionContext): Future[Map[String, List[RedisClusterNode]]] = {
     import com.lambdaworks.redis.models.role.RedisInstance.Role.{MASTER, SLAVE}
-    implicit val saladAPI = newSaladAPI
+    implicit val saladAPI = newSalad
 
-    saladAPI.clusterNodes map { allNodes =>
+    saladAPI().clusterNodes map { allNodes =>
       val masterNodes = allNodes.filter(MASTER == _.getRole)
       val slaveNodes = allNodes.filter(SLAVE == _.getRole)
+      saladAPI.shutdown()
 
       Map("masters" -> masterNodes.toList, "slaves" -> slaveNodes.toList)
     }

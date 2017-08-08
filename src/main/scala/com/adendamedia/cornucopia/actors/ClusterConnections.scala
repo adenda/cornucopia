@@ -121,18 +121,20 @@ class ValidateClusterConnections(implicit config: ClusterConnectionsConfig, clus
     case v: ValidateConnections =>
       validateConnections(v, sender)
     case kill: KillChild =>
-      throw kill.reason.get // I'm not super stoked about this syntax, but the reason should always be set so it should
-                            // be OK-ish.
+      throw kill.reason.get // TODO: use getOrElse
   }
 
   private def validateConnections(v: ValidateConnections, ref: ActorRef) = {
     implicit val executionContext = config.executionContext
     implicit val expectedTotalNumberSlots: Int = config.expectedTotalNumberSlots
     val newRedisURI = v.msg.newRedisUri // newly added redis node is a master without slot assignments
+
+    val connectionsToVerify = (v.connections._1, v.connections._2)
+
     clusterOperations.getRedisMasterNodes map { masterNodes =>
       // TODO: This is ugly, and probably bad b/c it uses exceptions for flow control. Maybe there is a better way.
-      if (redisHelpers.compareUsingSlotsCount(masterNodes, v.connections) &&
-          redisHelpers.connectionsHaveRedisNode(newRedisURI, v.connections)) GotClusterConnections(v.connections)
+      if (redisHelpers.compareUsingSlotsCount(masterNodes, connectionsToVerify) &&
+          redisHelpers.connectionsHaveRedisNode(newRedisURI, connectionsToVerify)) GotClusterConnections(v.connections)
     } recover {
       case e: RedisClusterConnectionsInvalidException =>
         self ! KillChild(v, Some(e))

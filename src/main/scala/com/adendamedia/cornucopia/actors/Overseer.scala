@@ -4,6 +4,7 @@ import akka.actor.SupervisorStrategy.Restart
 import akka.actor.{Actor, ActorLogging, ActorRef, ActorRefFactory, OneForOneStrategy, Props, Terminated}
 import com.adendamedia.cornucopia.CornucopiaException._
 import com.adendamedia.cornucopia.redis.ClusterOperations
+import com.adendamedia.cornucopia.redis.Connection.SaladAPI
 import com.adendamedia.cornucopia.redis.ReshardTableNew.ReshardTableType
 import com.adendamedia.cornucopia.Config
 import com.adendamedia.cornucopia.redis.ClusterOperations.{RedisUriToNodeId, ClusterConnectionsType}
@@ -53,7 +54,7 @@ object Overseer {
   case class ReshardWithoutRetiredMaster(uri: RedisURI) extends Reshard
 
   case class GetClusterConnections(newRedisUri: RedisURI) extends OverseerCommand
-  case class GotClusterConnections(connections: (ClusterOperations.ClusterConnectionsType,ClusterOperations.RedisUriToNodeId))
+  case class GotClusterConnections(connections: (ClusterOperations.ClusterConnectionsType,ClusterOperations.RedisUriToNodeId, SaladAPI))
 
   case class GotReshardTable(reshardTable: ReshardTableType)
 
@@ -64,18 +65,19 @@ object Overseer {
   case object ClusterNotReady
 
   case class MigrateSlotsForNewMaster(newMasterUri: RedisURI, connections: ClusterOperations.ClusterConnectionsType,
-                                      redisUriToNodeId: RedisUriToNodeId,
+                                      redisUriToNodeId: RedisUriToNodeId, salad: SaladAPI,
                                       reshardTable: ReshardTableType) extends OverseerCommand
 
   case class MigrateSlotsWithoutRetiredMaster(retiredMasterUri: RedisURI, connections: ClusterOperations.ClusterConnectionsType,
                                               redisUriToNodeId: RedisUriToNodeId,
+                                              salad: SaladAPI,
                                               reshardTable: ReshardTableType) extends OverseerCommand
 
   case class JobCompleted(job: OverseerCommand)
 
   case object Reset extends OverseerCommand
 
-  case class ValidateConnections(msg: GetClusterConnections, connections: (ClusterConnectionsType, RedisUriToNodeId)) extends OverseerCommand
+  case class ValidateConnections(msg: GetClusterConnections, connections: (ClusterConnectionsType, RedisUriToNodeId, SaladAPI)) extends OverseerCommand
   case object ClusterConnectionsValid
   case object ClusterConnectionsInvalid
 
@@ -223,13 +225,13 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
   }
 
   private def computingReshardTableForRemovingMaster(retiredMaster: RedisURI,
-                                                     clusterConnections: Option[(ClusterConnectionsType, RedisUriToNodeId)] = None,
+                                                     clusterConnections: Option[(ClusterConnectionsType, RedisUriToNodeId, SaladAPI)] = None,
                                                      reshardTable: Option[ReshardTableType] = None): Receive = {
     case GotClusterConnections(connections) =>
       log.info(s"Got cluster connections for removing retired master $retiredMaster")
       reshardTable match {
         case Some(table) =>
-          val cmd = MigrateSlotsWithoutRetiredMaster(retiredMaster, connections._1, connections._2, table)
+          val cmd = MigrateSlotsWithoutRetiredMaster(retiredMaster, connections._1, connections._2, connections._3, table)
           migrateSlotsSupervisor ! cmd
           context.unbecome()
           context.become(migratingSlotsWithoutRetiredMaster(cmd))
@@ -241,7 +243,7 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
       log.info(s"Got reshard table for removing retired master $retiredMaster")
       clusterConnections match {
         case Some(connections) =>
-          val cmd = MigrateSlotsWithoutRetiredMaster(retiredMaster, connections._1, connections._2, table)
+          val cmd = MigrateSlotsWithoutRetiredMaster(retiredMaster, connections._1, connections._2, connections._3, table)
           migrateSlotsSupervisor ! cmd
           context.unbecome()
           context.become(migratingSlotsWithoutRetiredMaster(cmd))
@@ -266,16 +268,21 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
   }
 
   private def addingSlaveNode(uri: RedisURI,
-                              clusterConnections: Option[(ClusterConnectionsType, RedisUriToNodeId)] = None): Receive = {
+                              clusterConnections: Option[(ClusterConnectionsType, RedisUriToNodeId, SaladAPI)] = None): Receive = {
     case GotClusterConnections(connections) =>
       log.info(s"Got cluster connections")
       val masterConnections = connections._1
       val redisUriToNodeId = connections._2
+      val saladAPI = connections._3
       replicatePoorestMasterSupervisor ! ReplicatePoorestMasterUsingSlave(uri)
       context.unbecome()
       context.become(addingSlaveNode(uri, Some(connections)))
     case ReplicatedMaster(slaveUri) =>
       log.info(s"Successfully replicated master node by new slave node $uri")
+      clusterConnections map {
+        case (_, _, salad) => salad.shutdown()
+        Unit
+      }
       context.system.eventStream.publish(SlaveNodeAdded(slaveUri))
 //      throw KillMeNow()
       context.unbecome()
@@ -289,7 +296,7 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
     * @param clusterConnections The connections to the master nodes
     */
   private def reshardingWithNewMaster(uri: RedisURI, reshardTable: Option[ReshardTableType] = None,
-                                      clusterConnections: Option[(ClusterConnectionsType, RedisUriToNodeId)] = None): Receive = {
+                                      clusterConnections: Option[(ClusterConnectionsType, RedisUriToNodeId, SaladAPI)] = None): Receive = {
     case GotClusterConnections(connections) =>
       log.info(s"Got cluster connections")
       reshardTable match {
@@ -312,7 +319,7 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
           context.become(reshardingWithNewMaster(uri, None, Some(connections)))
       }
     case GotReshardTable(table) =>
-      log.info(s"Got rehard table")
+      log.info(s"Got reshard table")
       clusterConnections match {
         case Some(connections) =>
           if (connectionsAreValidForAddingNewMaster(table, connections, uri)) {
@@ -335,7 +342,7 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
   }
 
   private def connectionsAreValidForAddingNewMaster(table: ReshardTableType,
-                                                    connections: (ClusterConnectionsType, RedisUriToNodeId),
+                                                    connections: (ClusterConnectionsType, RedisUriToNodeId, SaladAPI),
                                                     newRedisUri: RedisURI) = {
     // Since we validated the number of slots in the reshard table, we can be sure that it has all the master NodeId's in it
     val numNodes = table.keys.count(_ => true)
@@ -344,29 +351,31 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
   }
 
   private def waitingForClusterToBeReadyForNewMaster(uri: RedisURI, reshardTable: ReshardTableType,
-                                                     connections: (ClusterConnectionsType, RedisUriToNodeId)): Receive = {
+                                                     connections: (ClusterConnectionsType, RedisUriToNodeId, SaladAPI)): Receive = {
     case ClusterIsReady =>
       log.info(s"Cluster is ready, migrating slots")
-      val msg = MigrateSlotsForNewMaster(uri, connections._1, connections._2, reshardTable)
+      val msg = MigrateSlotsForNewMaster(uri, connections._1, connections._2, connections._3, reshardTable)
       migrateSlotsSupervisor ! msg
       context.unbecome()
       context.become(migratingSlotsForNewMaster(msg))
   }
 
-  private def migratingSlotsForNewMaster(overseerCommand: OverseerCommand): Receive = {
+  private def migratingSlotsForNewMaster(migrating: MigrateSlotsForNewMaster): Receive = {
     case JobCompleted(job: MigrateSlotsForNewMaster) =>
       log.info(s"Successfully added master node ${job.newMasterUri.toURI}")
+      migrating.salad.shutdown()
       context.system.eventStream.publish(MasterNodeAdded(job.newMasterUri))
 //      throw KillMeNow()
       context.unbecome()
       context.become(acceptingCommands)
   }
 
-  private def migratingSlotsWithoutRetiredMaster(overseerCommand: OverseerCommand): Receive = {
+  private def migratingSlotsWithoutRetiredMaster(migrating: MigrateSlotsWithoutRetiredMaster): Receive = {
     case JobCompleted(job: MigrateSlotsWithoutRetiredMaster) =>
       log.info(s"Successfully resharded without retired master node ${job.retiredMasterUri.toURI}")
       val cmd = GetSlavesOf(job.retiredMasterUri)
       getSlavesOfMasterSupervisor ! cmd
+      job.salad.shutdown()
       context.unbecome()
       context.become(gettingSlavesOfMaster(job.retiredMasterUri, cmd, job.connections, job.redisUriToNodeId))
     case _ =>

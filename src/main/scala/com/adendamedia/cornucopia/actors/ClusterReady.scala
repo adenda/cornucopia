@@ -14,7 +14,7 @@ object ClusterReadySupervisor {
   def props(implicit config: ClusterReadyConfig, clusterOperations: ClusterOperations): Props =
     Props(new ClusterReadySupervisor)
 
-  val name = "nodeReadySupervisor"
+  val name = "clusterReadySupervisor"
 }
 
 class ClusterReadySupervisor(implicit config: ClusterReadyConfig, clusterOperations: ClusterOperations)
@@ -81,7 +81,9 @@ class ClusterReady(implicit config: ClusterReadyConfig, clusterOperations: Clust
       case true => ClusterIsReady
       case false => ClusterNotReady
     } recover {
-      case e => self ! KillChild(ready)
+      case e =>
+        log.error(s"Failed waiting for cluster to be ready: {}", e)
+        self ! KillChild(ready)
     } pipeTo ref
   }
 
