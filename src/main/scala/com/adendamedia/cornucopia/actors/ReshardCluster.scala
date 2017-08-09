@@ -48,10 +48,12 @@ class ReshardClusterSupervisor(computeReshardTableMaker: ActorRefFactory => Acto
 
   override def supervisorStrategy = OneForOneStrategy(config.maxNrRetries) {
     case _: FailedOverseerCommand =>
-      self ! Retry
+      implicit val executionContext: ExecutionContext = config.executionContext
+      context.system.scheduler.scheduleOnce(2.seconds)(self ! Retry)
       Restart
     case _: ReshardTableException =>
-      self ! Retry
+      implicit val executionContext: ExecutionContext = config.executionContext
+      context.system.scheduler.scheduleOnce(2.seconds)(self ! Retry)
       Restart
   }
 

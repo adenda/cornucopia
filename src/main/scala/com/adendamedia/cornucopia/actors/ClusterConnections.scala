@@ -10,6 +10,8 @@ import com.adendamedia.cornucopia.redis.ClusterOperations.{ClusterConnectionsTyp
 import com.adendamedia.cornucopia.redis.RedisHelpers.RedisClusterConnectionsInvalidException
 import com.lambdaworks.redis.cluster.models.partitions.RedisClusterNode
 
+import scala.concurrent.ExecutionContext
+import scala.concurrent.duration._
 import scala.util.Try
 
 object ClusterConnectionsSupervisor {
@@ -34,12 +36,14 @@ class ClusterConnectionsSupervisor(implicit config: ClusterConnectionsConfig, cl
 
   override def supervisorStrategy = OneForOneStrategy(config.maxNrRetries) {
     case _: FailedOverseerCommand =>
+      implicit val executionContext: ExecutionContext = config.executionContext
       log.error("Error getting cluster connections, retrying")
-      self ! Retry
+      context.system.scheduler.scheduleOnce(2.seconds)(self ! Retry)
       Restart
     case _: RedisClusterConnectionsInvalidException =>
       log.error("Error validating cluster connections, retrying")
-      self ! Retry
+      implicit val executionContext: ExecutionContext = config.executionContext
+      context.system.scheduler.scheduleOnce(2.seconds)(self ! Retry)
       Restart
   }
 
@@ -121,7 +125,7 @@ class ValidateClusterConnections(implicit config: ClusterConnectionsConfig, clus
     case v: ValidateConnections =>
       validateConnections(v, sender)
     case kill: KillChild =>
-      throw kill.reason.get // TODO: use getOrElse
+      throw kill.reason.getOrElse(new Exception("An unknown error occurred"))
   }
 
   private def validateConnections(v: ValidateConnections, ref: ActorRef) = {
