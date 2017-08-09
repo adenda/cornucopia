@@ -739,18 +739,22 @@ object ClusterOperationsImpl extends ClusterOperations {
 
     saladAPI().clusterNodes map { clusterNodes =>
       val nodes = clusterNodes.toList
-      val removeNodeId: NodeId = nodes.find(_.getUri == uri).map(_.getNodeId).getOrElse(
-        throw CornucopiaForgetNodeException(s"Could not find the redis node to remove $uri")
-      )
       implicit val salad = saladAPI()
-      val remainingConnections = nodes.filterNot(_.getNodeId == removeNodeId) map(node => getConnection(node.getNodeId))
 
-      newSaladAPI(uri).clusterReset(hard = true).flatMap { _ =>
-        Future.sequence(remainingConnections).map { connections =>
-          connections.map { conn =>
-            conn.clusterForget(removeNodeId).map(identity)
-          }
-        } map (_ => saladAPI.shutdown())
+      val nodeIdToRemove = nodes.find(_.getUri == uri).map(_.getNodeId).getOrElse(
+        throw CornucopiaForgetNodeException(s"Could not find the node id of redis node $uri to remove")
+      )
+
+      val remainingConnections = nodes.filterNot(_.getNodeId == nodeIdToRemove) map(node => getConnection(node.getNodeId))
+
+      getConnection(nodeIdToRemove).flatMap { conn =>
+        conn.clusterReset(hard = true).flatMap { _ =>
+          Future.sequence(remainingConnections).map { connections =>
+            connections.map { conn =>
+              conn.clusterForget(nodeIdToRemove).map(identity)
+            }
+          } map (_ => saladAPI.shutdown())
+        }
       } recover {
         case e: RedisCommandExecutionException =>
           saladAPI.shutdown()
