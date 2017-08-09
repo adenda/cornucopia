@@ -231,7 +231,8 @@ class FailoverWorker(supervisor: ActorRef)(implicit config: FailoverConfig, clus
     log.info(s"Failing over slave now")
     implicit val executionContext: ExecutionContext = config.executionContext
     clusterOperations.failoverSlave(msg.uri) map (_ => VerifyFailoverCommand(msg)) recover {
-      case e => self ! KillChild(msg, Some(e))
+      case e =>
+        self ! KillChild(msg, Some(e))
     } pipeTo verifyFailover
   }
 
@@ -264,7 +265,7 @@ class VerifyFailover(supervisor: ActorRef)(implicit config: FailoverConfig, clus
       }
     case kill: KillChild =>
       val e = kill.reason.getOrElse(new Exception)
-      log.error(s"Failed verifying failover", e)
+      log.error(s"Failed verifying failover: {}", e)
       throw FailedOverseerCommand(kill.command)
   }
 

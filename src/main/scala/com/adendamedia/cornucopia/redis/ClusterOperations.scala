@@ -661,12 +661,12 @@ object ClusterOperationsImpl extends ClusterOperations {
   }
 
   def failoverMaster(uri: RedisURI)(implicit executionContext: ExecutionContext): Future[Unit] = {
-    implicit val saladAPI = newSalad(uri)
+    val saladAPI = newSalad(uri)
+    implicit val salad = saladAPI()
 
-    saladAPI().clusterFailover() map { x => saladAPI.shutdown(); x } recover {
-      case e =>
-        saladAPI.shutdown()
-        throw CornucopiaFailoverException(s"Could not fail over slave $uri", e)
+    getConnection(uri).flatMap(_.clusterFailover() map(_ => saladAPI.shutdown())) recover { case e =>
+      saladAPI.shutdown()
+      throw CornucopiaFailoverException(s"Could not fail over slave $uri", e)
     }
   }
 
