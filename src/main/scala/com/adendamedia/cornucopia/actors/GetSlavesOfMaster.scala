@@ -52,6 +52,7 @@ class GetSlavesOfMasterSupervisor(implicit config: GetSlavesOfMasterConfig, clus
       getSlavesOfMaster ! command
     case event: GotSlavesOf =>
       ref ! event
+      context.unbecome()
   }
 }
 
