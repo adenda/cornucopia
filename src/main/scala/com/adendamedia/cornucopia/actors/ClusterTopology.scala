@@ -5,6 +5,7 @@ import akka.pattern.pipe
 import akka.actor.SupervisorStrategy.Restart
 import com.adendamedia.cornucopia.redis.ClusterOperations
 import com.adendamedia.cornucopia.ConfigNew.ClusterTopologyConfig
+import com.lambdaworks.redis.cluster.models.partitions.RedisClusterNode
 
 import scala.concurrent.ExecutionContext
 
@@ -65,12 +66,18 @@ class ClusterTopology(implicit clusterOperations: ClusterOperations,
   private def logTopology(ref: ActorRef) = {
     implicit val executionContext: ExecutionContext = config.executionContext
     clusterOperations.getClusterTopology map { topology =>
-      log.info(s"Master nodes: ${topology.getOrElse("masters", "")}")
-      log.info(s"Slave nodes: ${topology.getOrElse("slaves", "")}")
+      logTopo(topology)
       TopologyLogged
     } recover {
       case e => self ! KillChild(LogTopology, Some(e))
     } pipeTo ref
+  }
+
+  private def logTopo(topology: Map[String, List[RedisClusterNode]]): Unit = {
+    val masters: List[RedisClusterNode] = topology.getOrElse("masters", List())
+    val slaves: List[RedisClusterNode] = topology.getOrElse("slaves", List())
+    log.info(s"Master nodes: ${masters.mkString("\n")}")
+    log.info(s"Slaves nodes: ${slaves.mkString("\n")}")
   }
 
 }
