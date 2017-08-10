@@ -6,7 +6,6 @@ import com.adendamedia.cornucopia.CornucopiaException._
 import com.adendamedia.cornucopia.redis.ClusterOperations
 import com.adendamedia.cornucopia.redis.Connection.SaladAPI
 import com.adendamedia.cornucopia.redis.ReshardTableNew.ReshardTableType
-import com.adendamedia.cornucopia.Config
 import com.adendamedia.cornucopia.redis.ClusterOperations.{ClusterConnectionsType, NodeIdToRedisUri, RedisUriToNodeId}
 import com.lambdaworks.redis.RedisURI
 import com.lambdaworks.redis.cluster.models.partitions.RedisClusterNode

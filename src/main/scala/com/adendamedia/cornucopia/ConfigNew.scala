@@ -3,7 +3,6 @@ package com.adendamedia.cornucopia
 import akka.actor.ActorSystem
 import com.typesafe.config.ConfigFactory
 import scala.concurrent.ExecutionContext
-import com.adendamedia.cornucopia.actors.SharedActorSystem.sharedActorSystem
 
 object ConfigNew {
 
@@ -75,7 +74,7 @@ object ConfigNew {
 
 }
 
-class ConfigNew {
+class ConfigNew(implicit val sharedActorSystem: ActorSystem) {
   import ConfigNew._
 
   implicit val actorSystem: ActorSystem = sharedActorSystem

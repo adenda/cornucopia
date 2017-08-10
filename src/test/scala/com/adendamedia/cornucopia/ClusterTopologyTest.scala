@@ -1,6 +1,5 @@
 package com.adendamedia.cornucopia
 
-import com.adendamedia.cornucopia.graph.CornucopiaActorSource
 import akka.testkit.TestKit
 import akka.actor.ActorSystem
 import akka.pattern.ask

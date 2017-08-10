@@ -3,5 +3,5 @@ package com.adendamedia.cornucopia.actors
 import akka.actor.ActorSystem
 
 object SharedActorSystem {
-  lazy val sharedActorSystem = ActorSystem()
+  lazy val system = ActorSystem()
 }

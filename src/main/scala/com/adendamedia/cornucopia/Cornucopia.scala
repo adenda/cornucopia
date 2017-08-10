@@ -65,7 +65,7 @@ object Cornucopia {
 
 }
 
-class Cornucopia {
+class Cornucopia(implicit val sharedActorSystem: ActorSystem) {
   import Cornucopia._
   import ConfigNew._
 

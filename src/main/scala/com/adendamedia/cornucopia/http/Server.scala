@@ -10,14 +10,14 @@ import akka.http.scaladsl.server.Directives._
 import akka.stream.ActorMaterializer
 import org.slf4j.LoggerFactory
 import com.typesafe.config.{Config, ConfigFactory}
-import com.adendamedia.cornucopia.actors.SharedActorSystem._
+import com.adendamedia.cornucopia.actors.SharedActorSystem
 
 object Server extends RequestTimeout {
   val config = ConfigFactory.load()
   val host = config.getString("cornucopia.http.host")
   val port = config.getInt("cornucopia.http.port")
 
-  implicit val system: ActorSystem = sharedActorSystem
+  implicit val system: ActorSystem = SharedActorSystem.system
   implicit val ec: ExecutionContextExecutor = system.dispatcher
 
   val api = new RestApi(system, requestTimeout(config)).routes
