@@ -2,17 +2,14 @@ package com.adendamedia.cornucopia.actors
 
 import com.adendamedia.cornucopia.Config.ClusterConnectionsConfig
 import com.adendamedia.cornucopia.redis.{ClusterOperations, RedisHelpers}
-import akka.actor.{Actor, ActorLogging, ActorRef, OneForOneStrategy, Props, SupervisorStrategy}
+import akka.actor.{Actor, ActorLogging, ActorRef, OneForOneStrategy, Props}
 import akka.actor.SupervisorStrategy.{Escalate, Restart}
 import akka.pattern.pipe
 import com.adendamedia.cornucopia.CornucopiaException.FailedOverseerCommand
-import com.adendamedia.cornucopia.redis.ClusterOperations.{ClusterConnectionsType, RedisUriToNodeId}
 import com.adendamedia.cornucopia.redis.RedisHelpers.RedisClusterConnectionsInvalidException
-import com.lambdaworks.redis.cluster.models.partitions.RedisClusterNode
 
 import scala.concurrent.ExecutionContext
 import scala.concurrent.duration._
-import scala.util.Try
 
 object ClusterConnectionsSupervisor {
   def props(implicit config: ClusterConnectionsConfig, clusterOperations: ClusterOperations,

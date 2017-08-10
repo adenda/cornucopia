@@ -1,14 +1,12 @@
 package com.adendamedia.cornucopia.http
 
 import scala.concurrent.{ExecutionContextExecutor, Future}
-import akka.actor.{Actor, ActorSystem, Props}
+import akka.actor.ActorSystem
 import akka.event.Logging
 import akka.util.Timeout
 import akka.http.scaladsl.Http
 import akka.http.scaladsl.Http.ServerBinding
-import akka.http.scaladsl.server.Directives._
 import akka.stream.ActorMaterializer
-import org.slf4j.LoggerFactory
 import com.typesafe.config.{Config, ConfigFactory}
 import com.adendamedia.cornucopia.actors.SharedActorSystem
 

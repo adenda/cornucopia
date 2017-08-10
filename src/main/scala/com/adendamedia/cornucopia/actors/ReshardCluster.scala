@@ -1,19 +1,15 @@
 package com.adendamedia.cornucopia.actors
 
-import akka.actor.SupervisorStrategy.Escalate
 import akka.actor.SupervisorStrategy.{Escalate, Restart}
 import akka.actor.{Actor, ActorLogging, ActorRef, ActorRefFactory, OneForOneStrategy, Props, Terminated}
-import akka.pattern.pipe
-import akka.actor.Status.{Failure, Success}
 import com.adendamedia.cornucopia.redis.{ClusterOperations, ReshardTable}
 import com.adendamedia.cornucopia.CornucopiaException._
 import com.adendamedia.cornucopia.Config.ReshardClusterConfig
-import Overseer.{GotReshardTable, OverseerCommand, ReshardWithNewMaster}
+import Overseer.GotReshardTable
 import com.adendamedia.cornucopia.redis.ClusterOperations.CornucopiaGetRedisSourceNodesException
 
 import scala.concurrent.duration._
-import scala.concurrent.{ExecutionContext, Future}
-import scala.util.Try
+import scala.concurrent.ExecutionContext
 import com.lambdaworks.redis.RedisURI
 import com.lambdaworks.redis.cluster.models.partitions.RedisClusterNode
 

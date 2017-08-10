@@ -1,7 +1,7 @@
 package com.adendamedia.cornucopia.actors
 
 import akka.actor.SupervisorStrategy.Restart
-import akka.actor.{Actor, ActorLogging, ActorRef, ActorRefFactory, OneForOneStrategy, Props, Terminated}
+import akka.actor.{Actor, ActorLogging, ActorRef, ActorRefFactory, OneForOneStrategy, Props}
 import com.adendamedia.cornucopia.CornucopiaException._
 import com.adendamedia.cornucopia.redis.ClusterOperations
 import com.adendamedia.cornucopia.redis.Connection.SaladAPI
@@ -9,9 +9,6 @@ import com.adendamedia.cornucopia.redis.ReshardTable.ReshardTableType
 import com.adendamedia.cornucopia.redis.ClusterOperations.{ClusterConnectionsType, NodeIdToRedisUri, RedisUriToNodeId}
 import com.lambdaworks.redis.RedisURI
 import com.lambdaworks.redis.cluster.models.partitions.RedisClusterNode
-
-import scala.concurrent.duration._
-import scala.util.Try
 
 object Overseer {
   def props(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
@@ -131,8 +128,7 @@ object Overseer {
 
 /**
   * The overseer subscribes to Redis commands that have been published by the dispatcher. This actor is the parent
-  * actor of all actors that process Redis cluster commands. Cluster commands include adding and removing nodes. The
-  * overseer subscribes to the Shutdown message, whereby after receiving this message, it will restart its children.
+  * actor of all actors that process Redis cluster commands. Cluster commands include adding and removing nodes.
   */
 class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
                reshardClusterSupervisorMaker: ActorRefFactory => ActorRef,
@@ -148,8 +144,6 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
   import MessageBus._
   import Overseer._
   import ClusterOperations.ClusterConnectionsType
-
-  import context.dispatcher
 
   val joinRedisNodeSupervisor: ActorRef = joinRedisNodeSupervisorMaker(context)
   val reshardClusterSupervisor: ActorRef = reshardClusterSupervisorMaker(context)
@@ -276,9 +270,6 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
                               clusterConnections: Option[(ClusterConnectionsType, RedisUriToNodeId, SaladAPI)] = None): Receive = {
     case GotClusterConnections(connections) =>
       log.info(s"Got cluster connections")
-      val masterConnections = connections._1
-      val redisUriToNodeId = connections._2
-      val saladAPI = connections._3
       replicatePoorestMasterSupervisor ! ReplicatePoorestMasterUsingSlave(uri)
       context.unbecome()
       context.become(addingSlaveNode(uri, Some(connections)))
@@ -289,7 +280,6 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
         Unit
       }
       context.system.eventStream.publish(SlaveNodeAdded(slaveUri))
-//      throw KillMeNow()
       context.unbecome()
       context.become(acceptingCommands)
   }
@@ -313,9 +303,7 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
           }
           else {
             log.warning(s"Redis connections are not valid")
-//            context.system.scheduler.scheduleOnce(2 seconds) {
             clusterConnectionsSupervisor ! GetClusterConnections(uri)
-//            }
             context.unbecome()
             context.become(reshardingWithNewMaster(uri, Some(table), None)) // discard invalid connections
           }
@@ -334,9 +322,7 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
           }
           else {
             log.warning(s"Redis connections are not valid")
-//            context.system.scheduler.scheduleOnce(2 seconds) {
             clusterConnectionsSupervisor ! GetClusterConnections(uri)
-//            }
             context.unbecome()
             context.become(reshardingWithNewMaster(uri, Some(table), None)) // discard invalid connections
           }
@@ -370,7 +356,6 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
       log.info(s"Successfully added master node ${job.newMasterUri.toURI}")
       migrating.salad.shutdown()
       context.system.eventStream.publish(MasterNodeAdded(job.newMasterUri))
-//      throw KillMeNow()
       context.unbecome()
       context.become(acceptingCommands)
   }
@@ -383,8 +368,6 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
       job.salad.shutdown()
       context.unbecome()
       context.become(gettingSlavesOfMaster(job.retiredMasterUri, cmd, job.connections, job.redisUriToNodeId))
-    case _ =>
-      log.error("wat42") // TODO: wat
   }
 
   private def gettingSlavesOfMaster(retiredMasterUri: RedisURI, command: GetSlavesOf,
@@ -440,7 +423,6 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
       log.info(s"Successfully forgot master node ${event.uri}")
       val msg = MasterNodeRemoved(uri)
       context.system.eventStream.publish(msg)
-//      throw KillMeNow()
       context.unbecome()
       context.become(acceptingCommands)
   }
@@ -450,7 +432,6 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
       log.info(s"Successfully forgot slave node ${event.uri}")
       val msg = SlaveNodeRemoved(uri)
       context.system.eventStream.publish(msg)
-//      throw KillMeNow()
       context.unbecome()
       context.become(acceptingCommands)
   }

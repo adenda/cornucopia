@@ -5,7 +5,7 @@ import akka.actor.{Actor, ActorLogging, ActorRef, Props}
 import scala.util.Try
 import scala.util.Success
 import scala.util.Failure
-import com.lambdaworks.redis.{RedisException, RedisURI}
+import com.lambdaworks.redis.RedisURI
 
 object Gatekeeper {
   def props: Props = Props(new Gatekeeper)
@@ -63,9 +63,10 @@ class Gatekeeper extends Actor with ActorLogging {
     case _                       => UNSUPPORTED
   }
 
-  // Allows to create Redis URI from the following forms:
-  // host OR host:port
-  // e.g., redis://127.0.0.1 OR redis://127.0.0.1:7006
+  /**
+    * Create Redis URI from the following forms: host OR host:port
+    * e.g., redis://127.0.0.1 OR redis://127.0.0.1:7006
+    */
   private def createRedisUri(uri: String): Try[RedisURI] = {
     Try {
       val parts = uri.split(":")

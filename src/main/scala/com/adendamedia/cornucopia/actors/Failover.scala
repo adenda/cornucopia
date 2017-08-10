@@ -1,21 +1,16 @@
 package com.adendamedia.cornucopia.actors
 
-import akka.actor.SupervisorStrategy.Escalate
-import akka.actor.SupervisorStrategy.{Escalate, Restart}
-import akka.actor.{Actor, ActorLogging, ActorRef, ActorRefFactory, OneForOneStrategy, Props, Terminated}
+import akka.actor.SupervisorStrategy.Restart
+import akka.actor.{Actor, ActorLogging, ActorRef, OneForOneStrategy, Props}
 import akka.pattern.pipe
-import akka.actor.Status.{Failure, Success}
-import com.adendamedia.cornucopia.redis.{ClusterOperations, ReshardTable}
+import com.adendamedia.cornucopia.redis.ClusterOperations
 import com.adendamedia.cornucopia.CornucopiaException._
 import com.adendamedia.cornucopia.Config.FailoverConfig
 import Overseer._
 import com.adendamedia.cornucopia.actors.FailoverSupervisor.DoFailover
 
 import scala.concurrent.duration._
-import scala.concurrent.{ExecutionContext, Future}
-import scala.util.Try
-import com.lambdaworks.redis.RedisURI
-import com.lambdaworks.redis.cluster.models.partitions.RedisClusterNode
+import scala.concurrent.ExecutionContext
 
 /**
   * When removing a redis node, it is necessary to specify whether a master or slave node should be removed, and the URI
@@ -128,7 +123,6 @@ object Failover {
 class Failover(supervisor: ActorRef)
               (implicit config: FailoverConfig, clusterOperations: ClusterOperations) extends Actor with ActorLogging {
   import Overseer._
-  import GetRole._
   import FailoverSupervisor.DoFailover
   import ClusterOperations.{Role, Master, Slave}
 
@@ -173,7 +167,6 @@ class FailoverWorker(supervisor: ActorRef)(implicit config: FailoverConfig, clus
 
   import Failover._
   import ClusterOperations._
-  import FailoverSupervisor._
 
   private val verifyFailover: ActorRef = context.actorOf(VerifyFailover.props(supervisor), VerifyFailover.name)
 
@@ -249,7 +242,6 @@ class VerifyFailover(supervisor: ActorRef)(implicit config: FailoverConfig, clus
   extends Actor with ActorLogging {
 
   import Failover._
-  import VerifyFailover._
   import Overseer._
   import ClusterOperations.{Role, Master, Slave}
 

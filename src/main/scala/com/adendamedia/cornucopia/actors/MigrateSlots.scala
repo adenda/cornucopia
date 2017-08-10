@@ -1,22 +1,16 @@
 package com.adendamedia.cornucopia.actors
 
-import akka.actor.SupervisorStrategy.Escalate
 import akka.actor.SupervisorStrategy.{Escalate, Restart, Resume}
-import akka.actor.{Actor, ActorLogging, ActorRef, ActorRefFactory, OneForOneStrategy, PoisonPill, Props, Terminated}
+import akka.actor.{Actor, ActorLogging, ActorRef, ActorRefFactory, OneForOneStrategy, PoisonPill, Props}
 import akka.pattern.pipe
-import akka.actor.Status.{Failure, Success}
 import com.adendamedia.cornucopia.redis.{ClusterOperations, ReshardTable}
 import com.adendamedia.cornucopia.redis.ReshardTable._
 import com.adendamedia.cornucopia.CornucopiaException._
 import com.adendamedia.cornucopia.Config.MigrateSlotsConfig
-import Overseer.{JobCompleted, MigrateSlotsForNewMaster, OverseerCommand, ReshardWithNewMaster}
+import Overseer.{JobCompleted, OverseerCommand}
 import com.adendamedia.cornucopia.redis.ClusterOperations.{MigrateSlotKeysMovedException, SetSlotAssignmentException}
-
-import scala.concurrent.duration._
-import scala.concurrent.{ExecutionContext, Future}
-import scala.util.Try
+import scala.concurrent.ExecutionContext
 import com.lambdaworks.redis.RedisURI
-import com.lambdaworks.redis.cluster.models.partitions.RedisClusterNode
 
 object MigrateSlotsSupervisor {
   def props(migrateSlotsWorkerMaker: (ActorRefFactory, ActorRef) => ActorRef)
@@ -80,8 +74,8 @@ object MigrateSlotsJobManager {
 /**
   * Implements the work-pulling pattern to rate-limit the migrate slot operations
   * @param migrateSlotWorkerMaker Factory to create workers
-  * @param clusterOperations
-  * @param config
+  * @param clusterOperations Operations on redis cluster
+  * @param config configuration object for slot migration
   */
 class MigrateSlotsJobManager(migrateSlotWorkerMaker: (ActorRefFactory, ActorRef) => ActorRef)
                             (implicit clusterOperations: ClusterOperations, config: MigrateSlotsConfig) extends

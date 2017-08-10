@@ -1,13 +1,11 @@
 package com.adendamedia.cornucopia.redis
 
-//import com.adendamedia.cornucopia.CornucopiaException._
 import org.slf4j.LoggerFactory
 import com.adendamedia.cornucopia.redis.Connection._
 import com.adendamedia.cornucopia.redis.ReshardTable._
 import com.lambdaworks.redis.cluster.models.partitions.RedisClusterNode
-import com.adendamedia.salad.SaladClusterAPI
 
-import scala.concurrent.{ExecutionContext, Future, blocking}
+import scala.concurrent.{ExecutionContext, Future}
 import com.lambdaworks.redis.{RedisCommandExecutionException, RedisException, RedisURI}
 
 object ClusterOperations {

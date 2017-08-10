@@ -1,10 +1,7 @@
 package com.adendamedia.cornucopia.redis
 
-import org.slf4j.LoggerFactory
 import com.lambdaworks.redis.cluster.models.partitions.RedisClusterNode
 import com.lambdaworks.redis.RedisURI
-
-import scala.util.Try
 
 object RedisHelpers {
 
@@ -15,7 +12,6 @@ object RedisHelpers {
 }
 
 trait RedisHelpers {
-  import RedisHelpers._
   import ClusterOperations._
 
   /**

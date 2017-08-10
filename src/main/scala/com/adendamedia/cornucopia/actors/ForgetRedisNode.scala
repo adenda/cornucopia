@@ -1,13 +1,10 @@
 package com.adendamedia.cornucopia.actors
 
 import akka.actor.SupervisorStrategy.Restart
-import akka.actor.{Actor, ActorLogging, ActorRef, OneForOneStrategy, Props, Terminated}
+import akka.actor.{Actor, ActorLogging, ActorRef, OneForOneStrategy, Props}
 import akka.pattern.pipe
 import com.adendamedia.cornucopia.redis.ClusterOperations
 import com.adendamedia.cornucopia.Config.ForgetRedisNodeConfig
-import com.adendamedia.cornucopia.CornucopiaException._
-import Overseer.OverseerCommand
-import com.lambdaworks.redis.RedisURI
 import scala.concurrent.duration._
 
 import scala.concurrent.ExecutionContext

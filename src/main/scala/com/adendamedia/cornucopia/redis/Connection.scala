@@ -20,7 +20,7 @@ object Connection {
   private val redisClusterPort = redisClusterConfig.getInt("seed.server.port")
   private val nodes = List(RedisURI.create(redisClusterSeedServer, redisClusterPort))
 
-  LoggerFactory.getLogger(this.getClass).debug(s"Cluster seed server: '${nodes}'")
+  LoggerFactory.getLogger(this.getClass).debug(s"Cluster seed server: '$nodes'")
 
   /**
     * Create a new API connection - new connections are necessary to refresh the view of the cluster topology

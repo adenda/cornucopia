@@ -2,13 +2,12 @@ package com.adendamedia.cornucopia.actors
 
 import com.adendamedia.cornucopia.Config.ClusterReadyConfig
 import com.adendamedia.cornucopia.redis.ClusterOperations
-import akka.actor.{Actor, ActorLogging, ActorRef, OneForOneStrategy, Props, SupervisorStrategy}
+import akka.actor.{Actor, ActorLogging, ActorRef, OneForOneStrategy, Props}
 import akka.actor.SupervisorStrategy.Restart
 import akka.pattern.pipe
 
 import scala.concurrent.duration._
 import com.adendamedia.cornucopia.CornucopiaException.FailedOverseerCommand
-import com.adendamedia.cornucopia.redis.ClusterOperations.ClusterConnectionsType
 
 object ClusterReadySupervisor {
   def props(implicit config: ClusterReadyConfig, clusterOperations: ClusterOperations): Props =

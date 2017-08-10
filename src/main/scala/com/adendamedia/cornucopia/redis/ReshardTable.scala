@@ -23,20 +23,20 @@ trait ReshardTable {
   import ReshardTable._
 
   /**
-    * Used when adding a new master
-    * @param sourceNodes
-    * @param ExpectedTotalNumberSlots
-    * @return
+    * Computes reshard table when adding a new master
+    * @param sourceNodes list of nodes that will be sharing slot keys with new master
+    * @param ExpectedTotalNumberSlots By default this is 16384
+    * @return the reshard table for adding a new master
     */
   def computeReshardTable(sourceNodes: List[RedisClusterNode])
                          (implicit ExpectedTotalNumberSlots: Int): ReshardTableType
 
   /**
-    * Use when removing an old master
-    * @param retiredNode
-    * @param remainingNodes
-    * @param ExpectedTotalNumberSlots
-    * @return
+    * Computes reshard table when removing an old master
+    * @param retiredNode The node that is being retired from the cluster and relinquishing its slots
+    * @param remainingNodes The remaining nodes after the retired node is removed
+    * @param ExpectedTotalNumberSlots default 16384
+    * @return the reshard table for removing a retired master
     */
   def computeReshardTablePrime(retiredNode: RedisClusterNode, remainingNodes: List[RedisClusterNode])
                               (implicit ExpectedTotalNumberSlots: Int): ReshardTableType

@@ -9,7 +9,6 @@ object CornucopiaException {
     val reason: Throwable
   }
 
-  // TODO: Remove this, it's only here while re-working and actorizing the stuff
   @SerialVersionUID(1L)
   case class CornucopiaRedisConnectionException(message: String, reason: Throwable = None.orNull)
     extends Exception(message, reason) with CornucopiaException with Serializable

@@ -1,11 +1,7 @@
 package com.adendamedia.cornucopia.redis
 
-import com.adendamedia.cornucopia.redis._
-import com.adendamedia.cornucopia.redis.Connection.{CodecType, Salad, getConnection, newSaladAPI}
-import com.adendamedia.salad.SaladClusterAPI
-
+import com.adendamedia.cornucopia.redis.Connection.{Salad, newSaladAPI}
 import org.slf4j.LoggerFactory
-import com.lambdaworks.redis.{RedisException, RedisURI}
 import com.lambdaworks.redis.cluster.models.partitions.RedisClusterNode
 import com.lambdaworks.redis.models.role.RedisInstance.Role
 import scala.concurrent.{ExecutionContext, Future}
