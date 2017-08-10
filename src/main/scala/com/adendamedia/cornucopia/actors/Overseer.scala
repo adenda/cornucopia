@@ -7,7 +7,7 @@ import com.adendamedia.cornucopia.redis.ClusterOperations
 import com.adendamedia.cornucopia.redis.Connection.SaladAPI
 import com.adendamedia.cornucopia.redis.ReshardTableNew.ReshardTableType
 import com.adendamedia.cornucopia.Config
-import com.adendamedia.cornucopia.redis.ClusterOperations.{RedisUriToNodeId, ClusterConnectionsType}
+import com.adendamedia.cornucopia.redis.ClusterOperations.{ClusterConnectionsType, NodeIdToRedisUri, RedisUriToNodeId}
 import com.lambdaworks.redis.RedisURI
 import com.lambdaworks.redis.cluster.models.partitions.RedisClusterNode
 
@@ -70,6 +70,7 @@ object Overseer {
 
   case class MigrateSlotsWithoutRetiredMaster(retiredMasterUri: RedisURI, connections: ClusterOperations.ClusterConnectionsType,
                                               redisUriToNodeId: RedisUriToNodeId,
+                                              nodeIdToRedisUri: NodeIdToRedisUri,
                                               salad: SaladAPI,
                                               reshardTable: ReshardTableType) extends OverseerCommand
 
@@ -231,7 +232,10 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
       log.info(s"Got cluster connections for removing retired master $retiredMaster")
       reshardTable match {
         case Some(table) =>
-          val cmd = MigrateSlotsWithoutRetiredMaster(retiredMaster, connections._1, connections._2, connections._3, table)
+          // invert the uri to nodeId map
+          val redisUriToNodeId: RedisUriToNodeId = connections._2
+          val nodeIdToRedisUri: NodeIdToRedisUri = redisUriToNodeId.map(_.swap)
+          val cmd = MigrateSlotsWithoutRetiredMaster(retiredMaster, connections._1, redisUriToNodeId, nodeIdToRedisUri, connections._3, table)
           migrateSlotsSupervisor ! cmd
           context.unbecome()
           context.become(migratingSlotsWithoutRetiredMaster(cmd))
@@ -243,7 +247,9 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
       log.info(s"Got reshard table for removing retired master $retiredMaster")
       clusterConnections match {
         case Some(connections) =>
-          val cmd = MigrateSlotsWithoutRetiredMaster(retiredMaster, connections._1, connections._2, connections._3, table)
+          val redisUriToNodeId: RedisUriToNodeId = connections._2
+          val nodeIdToRedisUri: NodeIdToRedisUri = redisUriToNodeId.map(_.swap)
+          val cmd = MigrateSlotsWithoutRetiredMaster(retiredMaster, connections._1, redisUriToNodeId, nodeIdToRedisUri, connections._3, table)
           migrateSlotsSupervisor ! cmd
           context.unbecome()
           context.become(migratingSlotsWithoutRetiredMaster(cmd))
@@ -346,7 +352,7 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
                                                     newRedisUri: RedisURI) = {
     // Since we validated the number of slots in the reshard table, we can be sure that it has all the master NodeId's in it
     val numNodes = table.keys.count(_ => true)
-    val numConnections = connections._1.keys.count(_ != connections._2(newRedisUri.toString))
+    val numConnections = connections._1.keys.count(_ != connections._2(newRedisUri))
     numNodes == numConnections
   }
 

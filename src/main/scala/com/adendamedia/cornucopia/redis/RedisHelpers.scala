@@ -68,7 +68,7 @@ object RedisHelpersImpl extends RedisHelpers {
                                connections: (ClusterConnectionsType, RedisUriToNodeId)): Boolean = {
 
     val nodeId = connections._2.getOrElse(
-      redisUri.toString,
+      redisUri,
       throw RedisClusterConnectionsInvalidException("Redis uri missing from connections")
     )
 

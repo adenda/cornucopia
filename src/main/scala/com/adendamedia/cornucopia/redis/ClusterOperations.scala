@@ -33,6 +33,10 @@ object ClusterOperations {
     extends Throwable(message, reason) with Serializable
 
   @SerialVersionUID(1L)
+  case class MigrateSlotKeysInputOutputException(message: String = "IOERR", reason: Throwable = None.orNull)
+    extends Throwable(message, reason) with Serializable
+
+  @SerialVersionUID(1L)
   case class ReplicateMasterException(message: String) extends Throwable(message) with Serializable
 
   @SerialVersionUID(1L)
@@ -62,7 +66,8 @@ object ClusterOperations {
   type NodeId = String
   type RedisUriString = String
   type ClusterConnectionsType = Map[NodeId, Connection.Salad]
-  type RedisUriToNodeId = Map[RedisUriString, NodeId]
+  type RedisUriToNodeId = Map[RedisURI, NodeId]
+  type NodeIdToRedisUri = Map[NodeId, RedisURI]
 
   trait Role
   case object Slave extends Role
@@ -375,7 +380,7 @@ object ClusterOperationsImpl extends ClusterOperations {
       } yield (master, getConnection(master.getNodeId))
     }
 
-    val result: Future[List[((NodeId, RedisUriString), Connection.Salad)]] = connections.flatMap { conns =>
+    val result: Future[List[((NodeId, RedisURI), Connection.Salad)]] = connections.flatMap { conns =>
       conns.unzip match {
         case (masters, futureConnections) =>
           val zero = List.empty[Connection.Salad]
@@ -383,16 +388,16 @@ object ClusterOperationsImpl extends ClusterOperations {
           Future.fold(futureConnections)(zero) { (cs1, conn) =>
             cs1 ++ List(conn)
           } map { cs: List[Connection.Salad] =>
-            masters.map(master => (master.getNodeId, master.getUri.toString)).zip(cs)
+            masters.map(master => (master.getNodeId, master.getUri)).zip(cs)
           }
       }
     }
 
-    val zero = (Map.empty[NodeId, Connection.Salad], Map.empty[RedisUriString, NodeId])
+    val zero = (Map.empty[NodeId, Connection.Salad], Map.empty[RedisURI, NodeId])
     val results = result.map { cs =>
       cs.foldLeft(zero) { case ((connectionMap, uriMap), tuple) =>
         tuple match {
-          case ((nodeId: NodeId, uri: RedisUriString), conn: Connection.Salad) =>
+          case ((nodeId: NodeId, uri: RedisURI), conn: Connection.Salad) =>
             (connectionMap + (nodeId -> conn), uriMap + (uri -> nodeId))
         }
       }
@@ -459,7 +464,7 @@ object ClusterOperationsImpl extends ClusterOperations {
     // migrate over all the keys in the slot from source to destination node
     val migrate = for {
       keys <- keyList
-      result <- sourceConn.migrate[CodecType](targetRedisURI, keys.toList)
+      result <- sourceConn.migrate[CodecType](targetRedisURI, keys.toList, timeout = 10000)
     } yield result
 
     def handleFailedMigration(error: Throwable): Future[Unit] = {
@@ -480,6 +485,9 @@ object ClusterOperationsImpl extends ClusterOperations {
       }
       else if (findError(errorString, "MOVED")) {
         throw MigrateSlotKeysMovedException(reason = error)
+      }
+      else if (findError(errorString, "IOERR")) {
+        throw MigrateSlotKeysInputOutputException(reason = error)
       }
       else {
         throw error
@@ -608,7 +616,7 @@ object ClusterOperationsImpl extends ClusterOperations {
     // Since when we join a node to the cluster it is first a master, then it should be in our collection of
     // cluster connections
     val newSlaveNodeId = redisUriToNodeId.getOrElse(
-      newSlaveUri.toString,
+      newSlaveUri,
       throw ReplicateMasterException("Could not get new Redis node Id")
     )
 
@@ -714,7 +722,7 @@ object ClusterOperationsImpl extends ClusterOperations {
                 (implicit executionContext: ExecutionContext): Future[Unit] = {
 
     val nodeToRemove: (NodeId, Salad) = (for {
-      nodeId <- redisUriToNodeId.get(uri.toString)
+      nodeId <- redisUriToNodeId.get(uri)
       connection <- connections.get(nodeId)
     } yield nodeId -> connection).getOrElse(
       throw CornucopiaForgetNodeException(s"Could not find the connection to redis node $uri")
