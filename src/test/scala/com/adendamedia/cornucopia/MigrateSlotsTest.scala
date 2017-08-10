@@ -45,7 +45,11 @@ class MigrateSlotsTest extends TestKit(testSystem)
 
     val testTargetNodeId = "target1"
 
-    val testRedisUriToNodeId: Map[RedisUriString, NodeId] = Map(redisURI.toString -> testTargetNodeId)
+    val testRedisUriToNodeId: Map[RedisURI, NodeId] = Map(redisURI -> testTargetNodeId)
+
+    val testNodeIdToRedisUri: Map[NodeId, RedisURI] = Map(testTargetNodeId -> redisURI)
+
+    val dummySaladApi: Connection.SaladAPI = mock[Connection.SaladAPI]
   }
 
   trait SuccessTestForAddingNewMaster extends TestConfig {
@@ -86,6 +90,9 @@ class MigrateSlotsTest extends TestKit(testSystem)
       "node2" -> List(3,4,5),
       "node3" -> List(6,7)
     )
+    override val testNodeIdToRedisUri: Map[NodeId, RedisURI] = Map("node1" -> redisURI, "node2" -> redisURI, "node3" -> redisURI)
+    val testSourceNodeId = "sourceNodeId"
+    override val testRedisUriToNodeId: Map[RedisURI, NodeId] = Map(redisURI -> testSourceNodeId)
 
     val migrateSlotWorkerMaker = (f: ActorRefFactory, m: ActorRef) => f.actorOf(MigrateSlotWorker.props(m), MigrateSlotWorker.name)
 
@@ -122,7 +129,7 @@ class MigrateSlotsTest extends TestKit(testSystem)
       val dummyConnections = Map.empty[NodeId, Connection.Salad]
       val dummyReshardTable = Map.empty[NodeId, List[Slot]]
 
-      val msg = MigrateSlotsForNewMaster(redisURI, dummyConnections, testRedisUriToNodeId, dummyReshardTable)
+      val msg = MigrateSlotsForNewMaster(redisURI, dummyConnections, testRedisUriToNodeId, dummySaladApi, dummyReshardTable)
 
       migrateSlotJobManager ! msg
 
@@ -134,7 +141,7 @@ class MigrateSlotsTest extends TestKit(testSystem)
     "010 - migrate slots for adding new master" in new SuccessTestForAddingNewMaster {
       val props = MigrateSlotsJobManager.props(migrateSlotWorkerMaker)
       val migrateSlotsJobManager = TestActorRef[MigrateSlotsJobManager](props)
-      val msg = MigrateSlotsForNewMaster(redisURI, dummyConnections, testRedisUriToNodeId, reshardTableMock)
+      val msg = MigrateSlotsForNewMaster(redisURI, dummyConnections, testRedisUriToNodeId, dummySaladApi, reshardTableMock)
 
       val pat = s"Successfully migrated slot \\d from node\\d to $testTargetNodeId"
 
@@ -148,9 +155,9 @@ class MigrateSlotsTest extends TestKit(testSystem)
     "020 - migrate slots for removing retired master" in new SuccessTestForRemovingRetiredMaster {
       val props = MigrateSlotsJobManager.props(migrateSlotWorkerMaker)
       val migrateSlotsJobManager = TestActorRef[MigrateSlotsJobManager](props)
-      val msg = MigrateSlotsWithoutRetiredMaster(redisURI, dummyConnections, testRedisUriToNodeId, reshardTableMock)
+      val msg = MigrateSlotsWithoutRetiredMaster(redisURI, dummyConnections, testRedisUriToNodeId, testNodeIdToRedisUri, dummySaladApi, reshardTableMock)
 
-      val pat = s"Successfully migrated slot \\d from $testTargetNodeId to node\\d"
+      val pat = s"Successfully migrated slot \\d from $testSourceNodeId to node\\d"
 
       EventFilter.debug(pattern = pat,
         occurrences = 7) intercept {
@@ -163,11 +170,13 @@ class MigrateSlotsTest extends TestKit(testSystem)
     "030 - signal to supervisor once it has completed its jobs" in new SuccessTestForAddingNewMaster {
       val props = MigrateSlotsJobManager.props(migrateSlotWorkerMaker)
       val migrateSlotsJobManager = TestActorRef[MigrateSlotsJobManager](props)
-      val msg = MigrateSlotsForNewMaster(redisURI, dummyConnections, testRedisUriToNodeId, reshardTableMock)
+      val msg = MigrateSlotsForNewMaster(redisURI, dummyConnections, testRedisUriToNodeId, dummySaladApi, reshardTableMock)
 
       migrateSlotsJobManager ! msg
 
-      expectMsg(JobCompleted(msg))
+      expectMsgPF() {
+        case JobCompleted(_) => true
+      }
     }
   }
 

@@ -28,24 +28,24 @@ class ClusterTopologyTest extends TestKit(ActorSystem("ClusterTopologyTest"))
 
   "Debugging" must {
     "be fun" in new ClusterTopologyDebug {
-      import Library.source._
+//      import Library.source._
 
 //      val cornucopiaActorSource = new CornucopiaActorSource
-      val cornucopiaActorSource = SharedTestGraph.graph
-
-      private val ref = cornucopiaActorSource.ref
-
-      implicit val timeout = Timeout(20 seconds)
-
-      val future = ask(ref, Task("?topology"))
-
-      future.onComplete {
-        case Failure(_) => assert(false)
-        case Success(msg) =>
-          assert(msg == Right("master", redisUri))
-      }
-
-      Await.ready(future, timeout.duration)
+//      val cornucopiaActorSource = SharedTestGraph.graph
+//
+//      private val ref = cornucopiaActorSource.ref
+//
+//      implicit val timeout = Timeout(20 seconds)
+//
+//      val future = ask(ref, Task("?topology"))
+//
+//      future.onComplete {
+//        case Failure(_) => assert(false)
+//        case Success(msg) =>
+//          assert(msg == Right("master", redisUri))
+//      }
+//
+//      Await.ready(future, timeout.duration)
     }
   }
 }

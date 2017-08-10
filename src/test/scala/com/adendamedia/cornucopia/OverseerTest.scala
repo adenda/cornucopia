@@ -17,6 +17,7 @@ import com.adendamedia.cornucopia.CornucopiaException._
 import org.scalatest.mockito.MockitoSugar
 import OverseerTest._
 import com.adendamedia.cornucopia.ConfigNew.JoinRedisNodeConfig
+import com.adendamedia.cornucopia.redis.Connection.SaladAPI
 import com.lambdaworks.redis.cluster.models.partitions.RedisClusterNode
 
 class OverseerTest extends TestKit(testSystem)
@@ -39,6 +40,8 @@ class OverseerTest extends TestKit(testSystem)
     }
     implicit val joinRedisNodeMaxNrRetries: Int = 2
     val cornucopiaRedisConnectionExceptionMessage = "wat"
+
+    val dummySaladApi: SaladAPI = mock[SaladAPI]
 
     implicit val ec: ExecutionContext = system.dispatcher
     implicit val clusterOperations: ClusterOperations = mock[ClusterOperations]
@@ -88,12 +91,15 @@ class OverseerTest extends TestKit(testSystem)
     val redisURI: RedisURI = RedisURI.create(uriString)
     implicit val clusterOperations: ClusterOperations = mock[ClusterOperations]
     val testTargetNodeId = "target1"
-    val testRedisUriToNodeId: Map[RedisUriString, NodeId] = Map(uriString -> testTargetNodeId)
+    val testRedisUriToNodeId: Map[RedisURI, NodeId] = Map(redisURI -> testTargetNodeId)
+    val testNodeIdToRedisUri: Map[NodeId, RedisURI] = Map(testTargetNodeId -> redisURI)
     val dummyConnections: ClusterConnectionsType = Map.empty[NodeId, Connection.Salad]
 
     val reshardTableMock: ReshardTableType = Map("node1" -> List(1, 2), "node2" -> List(3,4,5), "node3" -> List(6,7))
 
     val reshardTableMockEmpty: ReshardTableType = Map.empty[NodeId, List[Slot]]
+
+    val dummySaladApi: SaladAPI = mock[SaladAPI]
   }
 
   trait ReplicatePoorestMasterTest {
@@ -106,8 +112,9 @@ class OverseerTest extends TestKit(testSystem)
     implicit val clusterOperations: ClusterOperations = mock[ClusterOperations]
     val testTargetNodeId = "target1"
     val testRedisUriToNodeId: Map[RedisUriString, NodeId] = Map(uriString -> testTargetNodeId)
-    val dummyConnections: (ClusterConnectionsType, RedisUriToNodeId) =
-      (Map.empty[NodeId, Connection.Salad], Map.empty[String,NodeId])
+    val dummySaladApi: SaladAPI = mock[SaladAPI]
+    val dummyConnections: (ClusterConnectionsType, RedisUriToNodeId, SaladAPI) =
+      (Map.empty[NodeId, Connection.Salad], Map.empty[RedisURI, NodeId], dummySaladApi)
 
   }
 
@@ -257,7 +264,7 @@ class OverseerTest extends TestKit(testSystem)
       val probe = TestProbe()
       system.eventStream.subscribe(probe.ref, classOf[MasterNodeAdded])
 
-      val migrateMessage = MigrateSlotsForNewMaster(redisURI, dummyConnections, testRedisUriToNodeId, reshardTableMockEmpty)
+      val migrateMessage = MigrateSlotsForNewMaster(redisURI, dummyConnections, testRedisUriToNodeId, dummySaladApi, reshardTableMockEmpty)
 
       val blackHole = (f: ActorRefFactory) => f.actorOf(TestActors.blackholeProps)
 
@@ -267,7 +274,7 @@ class OverseerTest extends TestKit(testSystem)
 
       overseer ! AddMaster(redisURI)
       overseer ! MasterNodeJoined(redisURI)
-      overseer ! GotClusterConnections(dummyConnections, testRedisUriToNodeId)
+      overseer ! GotClusterConnections((dummyConnections, testRedisUriToNodeId, dummySaladApi))
       overseer ! GotReshardTable(reshardTableMockEmpty)
       overseer ! ClusterIsReady
       overseer ! JobCompleted(migrateMessage)
@@ -280,7 +287,7 @@ class OverseerTest extends TestKit(testSystem)
       val probe = TestProbe()
       system.eventStream.subscribe(probe.ref, classOf[MasterNodeRemoved])
 
-      val migrateMessage = MigrateSlotsWithoutRetiredMaster(redisURI, dummyConnections, testRedisUriToNodeId, reshardTableMockEmpty)
+      val migrateMessage = MigrateSlotsWithoutRetiredMaster(redisURI, dummyConnections, testRedisUriToNodeId, testNodeIdToRedisUri, dummySaladApi, reshardTableMockEmpty)
 
       val blackHole = (f: ActorRefFactory) => f.actorOf(TestActors.blackholeProps)
 
@@ -291,7 +298,7 @@ class OverseerTest extends TestKit(testSystem)
       overseer ! RemoveMaster(redisURI)
       overseer ! FailoverComplete
       overseer ! TopologyLogged
-      overseer ! GotClusterConnections(dummyConnections, testRedisUriToNodeId)
+      overseer ! GotClusterConnections((dummyConnections, testRedisUriToNodeId, dummySaladApi))
       overseer ! GotReshardTable(reshardTableMockEmpty)
       overseer ! JobCompleted(migrateMessage)
       overseer ! GotSlavesOf(redisURI, List[RedisClusterNode]())

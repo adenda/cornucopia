@@ -39,7 +39,10 @@ class ClusterConnectionsTest extends TestKit(testSystem)
     implicit val clusterOperations: ClusterOperations = mock[ClusterOperations]
     implicit val redisHelpers: RedisHelpers = mock[RedisHelpers]
 
-    val dummyConnections = (Map.empty[NodeId, Connection.Salad], Map.empty[RedisUriString, NodeId])
+    val saladApiDummy: Connection.SaladAPI = mock[Connection.SaladAPI]
+
+    val dummyConnections = (Map.empty[NodeId, Connection.Salad], Map.empty[RedisURI, NodeId], saladApiDummy)
+    val dummies = (dummyConnections._1, dummyConnections._2)
 
     val dummyMasters: List[RedisClusterNode] = List.empty[RedisClusterNode]
 
@@ -63,7 +66,7 @@ class ClusterConnectionsTest extends TestKit(testSystem)
       val msg = GetClusterConnections(redisURI)
 
       EventFilter.error(message = expectedErrorMessage,
-        occurrences = ClusterConnectionsConfigTest.maxNrRetries + 1) intercept {
+        occurrences = ClusterConnectionsConfigTest.maxNrRetries) intercept {
         clusterConnectionsSupervisor ! msg
       }
     }
@@ -81,11 +84,12 @@ class ClusterConnectionsTest extends TestKit(testSystem)
         Future.successful(dummyMasters)
       )
 
-      when(redisHelpers.compareUsingSlotsCount(dummyMasters, dummyConnections)(ClusterConnectionsConfigTest.expectedTotalNumberSlots)).thenThrow(
+
+      when(redisHelpers.compareUsingSlotsCount(dummyMasters, dummies)(ClusterConnectionsConfigTest.expectedTotalNumberSlots)).thenThrow(
         RedisClusterConnectionsInvalidException("wat")
       )
 
-      when(redisHelpers.connectionsHaveRedisNode(redisURI, dummyConnections)).thenReturn(
+      when(redisHelpers.connectionsHaveRedisNode(redisURI, dummies)).thenReturn(
         true
       )
 
@@ -96,7 +100,7 @@ class ClusterConnectionsTest extends TestKit(testSystem)
       val msg = GetClusterConnections(redisURI)
 
       EventFilter.error(message = expectedErrorMessage,
-        occurrences = ClusterConnectionsConfigTest.maxNrRetries + 1) intercept {
+        occurrences = ClusterConnectionsConfigTest.maxNrRetries) intercept {
         clusterConnectionsSupervisor ! msg
       }
     }
@@ -116,11 +120,11 @@ class ClusterConnectionsTest extends TestKit(testSystem)
         Future.successful(dummyMasters)
       )
 
-      when(redisHelpers.compareUsingSlotsCount(dummyMasters, dummyConnections)(ClusterConnectionsConfigTest.expectedTotalNumberSlots)).thenReturn(
+      when(redisHelpers.compareUsingSlotsCount(dummyMasters, dummies)(ClusterConnectionsConfigTest.expectedTotalNumberSlots)).thenReturn(
         true
       )
 
-      when(redisHelpers.connectionsHaveRedisNode(redisURI, dummyConnections)).thenReturn(
+      when(redisHelpers.connectionsHaveRedisNode(redisURI, dummies)).thenReturn(
         true
       )
 

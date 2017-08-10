@@ -139,7 +139,7 @@ class ReshardClusterTest extends TestKit(testSystem)
   }
 
   "ReshardClusterSupervisor" should {
-    "Retry computing reshard table for new master if there is an error" in new ReshardTest with ReshardClusterConfigTest {
+    "030 - Retry computing reshard table for new master if there is an error" in new ReshardTest with ReshardClusterConfigTest {
       // NOTE: ReshardClusterSupervisor is the grand-parent of ComputeReshardTable actor, and the error is escalated
       //       from its child
       import ReshardTableNew._
@@ -169,7 +169,7 @@ class ReshardClusterTest extends TestKit(testSystem)
         s"Computing reshard table to add new master ${redisURI1.toURI}"
 
       EventFilter.info(message = expectedErrorMessage,
-        occurrences = ReshardClusterConfigTest.maxNrRetries + 1) intercept {
+        occurrences = ReshardClusterConfigTest.maxNrRetries) intercept {
         reshardClusterSupervisor ! msg
       }
     }
