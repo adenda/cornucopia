@@ -1,20 +1,32 @@
 # Cornucopia
 
-A microservice and library for auto-sharding Redis Cluster. Implemented on Akka Streams, with Salad wrapping the Java 8 Lettuce API for Redis. 
+Cornucopia is a controller for Redis cluster that performs auto-sharding when adding and removing Redis cluster nodes.
 
 This project is originally a fork from [`kliewkliew/cornucopia`](https://github.com/kliewkliew/cornucopia).
 
 ## Operations
 
-The following keys for messages correspond to operations to be performed in Cornucopia.
+The following keys for task messages correspond to operations to be performed in Cornucopia.
 
 ### Add or Remove a Node
 
-* `+master`
-* `+slave`
-* `-slave`
+* `+master`: Add Master node
+* `+slave`: Add Slave node
+* `-master`: Remove Master node
+* `-slave`: Remove Slave node
 
-The value contained in the message is the URI (must be resolvable at the microservice) of the node to operate on. See [Redis URI and connection details](https://github.com/mp911de/lettuce/wiki/Redis-URI-and-connection-details).
+The value contained in the message is the URI of the node to operate on. See [Redis URI and connection details](https://github.com/mp911de/lettuce/wiki/Redis-URI-and-connection-details). When adding a node to the cluster, the URI value indicates the Redis cluster node to be added to the cluster. When removing a node from the cluster, the URI value indicates the cluster node to be removed. If the cluster node to be removed is not of the node type (master or slave) indicated in the task message, then the cluster node is converted into that node type by performing a manual failover. Cornucopia does not support removing a slave node from the cluster if the URI value in the task message hosts a master node that is not replicated by a slave node. Technically this is a limitation. That said, it could be considered a best practice to have all master nodes replicated by a slave at any given time in the cluster.
+
+Adding or removing a master node will automatically trigger a cluster reshard event. 
+
+New slave nodes will initially be assigned to the master with the least slaves. Beyond that, Redis Cluster itself has the ability to migrate slaves to other masters based on the cluster configuration.
+
+Note that Redis cluster will automatically assign or reassign nodes between master or slave roles, or migrate slaves between masters or do failover.
+You may see errors due to Redis doing reassignment when the cluster is small.
+For example, when testing with only two nodes, after adding the second node as a master, the first node can become a slave.
+If you then try to remove the second node, there will be no masters left.
+The behaviour is more predictable as more nodes are added to the cluster.
+It is generally advisable to maintain a cluster with at least three master nodes at all times.
 
 #### Using Cornucopia as a microservice
 
@@ -30,39 +42,23 @@ For example, assume that the micro service is running on HTTP port 9001 on local
     	"redisNodeIp": "redis://localhost:7006"
     }'
     
-To remove a slave which is replicating the master with the largest number of slaves:
-
-     curl -X POST \
-       http://localhost:9001/task \
-        -H 'content-type: application/json' \
-        -d '{
-        "operation": "-slave"
-     }'
-    
 #### Using Cornucopia as a library in your application
 
 Include Cornucopia in your `build.sbt` file: `"com.adendamedia" %% "cornucopia" % "0.5.0"`. Control messages are sent to Cornucopia using an ActorRef that must be imported.
 
-    import com.adendamedia.cornucopia.Library
-    import com.adendamedia.cornucopia.actors.CornucopiaSource.Task
-   
-Then, for example, from within your own AKKA actor you can send a message to Cornucopia:
+```scala
+import com.adendamedia.cornucopia.Library
+import com.adendamedia.cornucopia.actors.Gatekeeper.{Task, TaskAccepted, TaskDenied}
+```
 
-    val cornucopiaRef = Library.ref    
-    cornucopiaRef ! Task("+master", "redis://localhost:7006")
+From within your own AKKA actor you can send a message to Cornucopia. Note that the library requires an implicit Actor System. This actor system can be reused from within your own application.
 
-Adding a master node will automatically trigger a `*reshard` event. Currently, removing a master node is not supported, but should be supported in the next release.
-
-New slave nodes will initially be assigned to the master with the least slaves.
-Beyond that, Redis Cluster itself has the ability to migrate slaves to other masters based on the cluster configuration.
-
-Note that Redis cluster will automatically assign or reassign nodes between master or slave roles, or migrate slaves between masters or do failover.
-You may see errors due to Redis doing reassignment when the cluster is small.
-For example, when testing with only two nodes, after adding the second node as a master, the first node can become a slave.
-If you then try to remove the second node, there will be no masters left.
-The behaviour is more predictable as more nodes are added to the cluster.
-
-There may be multiple node ids (dead nodes that were not previously removed) assigned to one URI and Redis only returns one at a time so you may have to remove the same URI multiple times to remove the correct node id.
+```scala
+implicit val system: ActorSystem = ActorSystem()
+val library: com.adendamedia.cornucopia.Library = new Library
+val cornucopiaRef = library.ref    
+cornucopiaRef ! Task("+master", "redis://localhost:7006")
+```
 
 ## Application configuration
 
@@ -70,13 +66,9 @@ There may be multiple node ids (dead nodes that were not previously removed) ass
 
 | Setting  | Description  |
 |:----------|:--------------|
-| `cornucopia.refresh.timeout` | Time (seconds) to wait for cluster topology changes to propagate (default: 5 seconds).  |
-| `cornucopia.batch.period` | Time (seconds) to wait for batches to accumulate before executing a job (default: 5 seconds). |
 | `cornucopia.http.host` | The hostname where the Cornucopia microservice is run (default: localhost). |
 | `cornucopia.http.port` | The port on which the Cornucopia microservice is run (default: 9001). |
-| `cornucopia.reshard.interval` | Mininum time (seconds) to wait between reshard events (default: 60 seconds). |
-| `cornucopia.reshard.timeout` | The maximum upper time limit (seconds) that the cluster must be resharded within without the resharding failing (default: 300 seconds). |
-| `cornucopia.migrate.slot.timeout` | The maximum upper time limit (seconds) that a slot must be migrated from one node to another during resharding without slot migration failing. (default: 60 seconds) |
+| `cornucopia.migrate.slots.workers` | The number of workers to run migrate slot commands during cluster resharding. This setting effectively rate limits the number of asynchronous migrate slots jobs that can be running at any given time. (default: 5) |
 
 ### Redis configuration settings
 
@@ -85,11 +77,3 @@ There may be multiple node ids (dead nodes that were not previously removed) ass
 | `redis.cluster.seed.server.host` | Initial node-hostname from which the full cluster topology will be derived (default: localhost). |
 | `redis.cluster.seed.server.port` | Initial node-port from which the full cluster topology will be derived (default: 7000). |
 
-## Auto-Scaling
-
-High memory utilization will require more master nodes.
-High master CPU utilization (writes) will require more master nodes.
-High slave CPU utilization (reads) will require more slave nodes.
-
-Determination of scaling requirements is outside the scope of this project.
-A Kubernetes project will be available to instantiate and request initialization for node types based on cluster utilization.
