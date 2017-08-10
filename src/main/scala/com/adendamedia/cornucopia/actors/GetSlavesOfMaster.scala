@@ -1,6 +1,6 @@
 package com.adendamedia.cornucopia.actors
 
-import com.adendamedia.cornucopia.ConfigNew.GetSlavesOfMasterConfig
+import com.adendamedia.cornucopia.Config.GetSlavesOfMasterConfig
 import com.adendamedia.cornucopia.redis.ClusterOperations
 import akka.actor.{Actor, ActorLogging, ActorRef, OneForOneStrategy, Props, SupervisorStrategy}
 import com.lambdaworks.redis.RedisURI

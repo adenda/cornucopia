@@ -4,12 +4,12 @@ import akka.testkit.{EventFilter, ImplicitSender, TestActorRef, TestActors, Test
 import akka.actor.{ActorRefFactory, ActorSystem, ActorRef}
 import com.typesafe.config.ConfigFactory
 import com.adendamedia.cornucopia.actors._
-import com.adendamedia.cornucopia.ConfigNew._
+import com.adendamedia.cornucopia.Config._
 import com.adendamedia.cornucopia.actors.MigrateSlotsJobManager._
 import com.adendamedia.cornucopia.redis.ClusterOperations
 import com.adendamedia.cornucopia.redis.Connection
-import com.adendamedia.cornucopia.redis.ReshardTableNew._
-import com.adendamedia.cornucopia.ConfigNew.ClusterReadyConfig
+import com.adendamedia.cornucopia.redis.ReshardTable._
+import com.adendamedia.cornucopia.Config.ClusterReadyConfig
 import org.scalatest.{BeforeAndAfterAll, MustMatchers, WordSpecLike}
 import org.mockito.Mockito._
 import org.mockito.Matchers._

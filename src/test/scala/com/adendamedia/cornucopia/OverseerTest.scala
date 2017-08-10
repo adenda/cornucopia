@@ -16,7 +16,7 @@ import com.adendamedia.cornucopia.actors.Overseer
 import com.adendamedia.cornucopia.CornucopiaException._
 import org.scalatest.mockito.MockitoSugar
 import OverseerTest._
-import com.adendamedia.cornucopia.ConfigNew.JoinRedisNodeConfig
+import com.adendamedia.cornucopia.Config.JoinRedisNodeConfig
 import com.adendamedia.cornucopia.redis.Connection.SaladAPI
 import com.lambdaworks.redis.cluster.models.partitions.RedisClusterNode
 
@@ -85,7 +85,7 @@ class OverseerTest extends TestKit(testSystem)
   trait MigrateTest {
     import com.adendamedia.cornucopia.redis.ClusterOperations._
     import com.adendamedia.cornucopia.redis.Connection
-    import com.adendamedia.cornucopia.redis.ReshardTableNew._
+    import com.adendamedia.cornucopia.redis.ReshardTable._
 
     val uriString: String = "redis://192.168.0.100"
     val redisURI: RedisURI = RedisURI.create(uriString)
@@ -105,7 +105,7 @@ class OverseerTest extends TestKit(testSystem)
   trait ReplicatePoorestMasterTest {
     import com.adendamedia.cornucopia.redis.ClusterOperations._
     import com.adendamedia.cornucopia.redis.Connection
-    import com.adendamedia.cornucopia.redis.ReshardTableNew._
+    import com.adendamedia.cornucopia.redis.ReshardTable._
 
     val uriString: String = "redis://192.168.0.100"
     val redisURI: RedisURI = RedisURI.create(uriString)

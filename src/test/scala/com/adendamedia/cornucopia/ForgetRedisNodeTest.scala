@@ -5,7 +5,7 @@ import akka.actor.{ActorRefFactory, ActorSystem}
 import com.typesafe.config.ConfigFactory
 import com.adendamedia.cornucopia.actors._
 import com.adendamedia.cornucopia.redis.ClusterOperations
-import com.adendamedia.cornucopia.redis.ReshardTableNew
+import com.adendamedia.cornucopia.redis.ReshardTable
 import org.scalatest.{BeforeAndAfterAll, MustMatchers, WordSpecLike}
 import org.mockito.Mockito._
 
@@ -16,10 +16,10 @@ import com.lambdaworks.redis.cluster.models.partitions.RedisClusterNode
 import com.adendamedia.cornucopia.CornucopiaException._
 import com.adendamedia.cornucopia.redis.Connection
 import com.adendamedia.cornucopia.redis.ClusterOperations._
-import com.adendamedia.cornucopia.ConfigNew.ForgetRedisNodeConfig
+import com.adendamedia.cornucopia.Config.ForgetRedisNodeConfig
 import org.scalatest.mockito.MockitoSugar
 import ReshardClusterTest._
-import com.adendamedia.cornucopia.redis.ReshardTableNew.ReshardTableType
+import com.adendamedia.cornucopia.redis.ReshardTable.ReshardTableType
 import ForgetRedisNodeTest.testSystem
 import Overseer._
 

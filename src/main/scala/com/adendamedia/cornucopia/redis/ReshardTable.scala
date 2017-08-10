@@ -11,10 +11,39 @@ object ReshardTable {
   type Slot = Int
   type ReshardTableType = scala.collection.immutable.Map[NodeId, List[Slot]]
 
-  case class ReshardTableException(private val message: String = "", private val cause: Throwable = None.orNull)
-    extends Exception(message, cause)
-
   case class LogicalNode(node: RedisClusterNode, slots: List[Int])
+
+  @SerialVersionUID(1L)
+  case class ReshardTableException(private val message: String = "", private val cause: Throwable = None.orNull)
+    extends RuntimeException(message, cause) with Serializable
+
+}
+
+trait ReshardTable {
+  import ReshardTable._
+
+  /**
+    * Used when adding a new master
+    * @param sourceNodes
+    * @param ExpectedTotalNumberSlots
+    * @return
+    */
+  def computeReshardTable(sourceNodes: List[RedisClusterNode])
+                         (implicit ExpectedTotalNumberSlots: Int): ReshardTableType
+
+  /**
+    * Use when removing an old master
+    * @param retiredNode
+    * @param remainingNodes
+    * @param ExpectedTotalNumberSlots
+    * @return
+    */
+  def computeReshardTablePrime(retiredNode: RedisClusterNode, remainingNodes: List[RedisClusterNode])
+                              (implicit ExpectedTotalNumberSlots: Int): ReshardTableType
+}
+
+object ReshardTableImpl extends ReshardTable {
+  import ReshardTable._
 
   private val logger = LoggerFactory.getLogger(this.getClass)
 
@@ -103,7 +132,7 @@ object ReshardTable {
     def computeReshardTable(tbl: ReshardTableType, remainingSourceSlots: List[Int], i: Int): ReshardTableType = {
       if (remainingSourceSlots.isEmpty) tbl
       else {
-        val numSlots = computeNumSlots(i)
+        val numSlots = if (i + 1 == sortedTargets.size) remainingSourceSlots.size else computeNumSlots(i)
         val slots = remainingSourceSlots.take(numSlots)
         val slotsRemaining = remainingSourceSlots.drop(numSlots)
         val targetNodeId = sortedTargets(i).node.getNodeId

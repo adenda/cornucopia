@@ -5,7 +5,7 @@ import akka.actor.{ActorRef, ActorSystem}
 import org.scalatest.{BeforeAndAfterAll, MustMatchers, WordSpecLike}
 import com.lambdaworks.redis.RedisURI
 import com.adendamedia.cornucopia.actors._
-import com.adendamedia.cornucopia.ConfigNew.ReplicatePoorestMasterConfig
+import com.adendamedia.cornucopia.Config.ReplicatePoorestMasterConfig
 import com.adendamedia.cornucopia.actors.Overseer.{ReplicatePoorestMasterUsingSlave, ReplicatePoorestRemainingMasterUsingSlave, ReplicatedMaster}
 import com.adendamedia.cornucopia.redis.ClusterOperations
 import com.adendamedia.cornucopia.redis.ClusterOperations._

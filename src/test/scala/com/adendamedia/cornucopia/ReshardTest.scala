@@ -11,8 +11,8 @@ import scala.concurrent.Await
 import scala.util.{ Success, Failure }
 import redis.Connection.{newSaladAPI, Salad}
 import com.lambdaworks.redis.cluster.models.partitions.RedisClusterNode
-import com.adendamedia.cornucopia.redis.ReshardTableNew._
-import com.adendamedia.cornucopia.redis.ReshardTableNewImpl._
+import com.adendamedia.cornucopia.redis.ReshardTable._
+import com.adendamedia.cornucopia.redis.ReshardTableImpl._
 
 class ReshardTest extends TestKit(ActorSystem("ReshardTest"))
   with WordSpecLike with BeforeAndAfterAll with MustMatchers with MockitoSugar {

@@ -4,7 +4,7 @@ import akka.actor.{Actor, ActorLogging, ActorRef, Props, OneForOneStrategy}
 import akka.pattern.pipe
 import akka.actor.SupervisorStrategy.Restart
 import com.adendamedia.cornucopia.redis.ClusterOperations
-import com.adendamedia.cornucopia.ConfigNew.ClusterTopologyConfig
+import com.adendamedia.cornucopia.Config.ClusterTopologyConfig
 import com.lambdaworks.redis.cluster.models.partitions.RedisClusterNode
 
 import scala.concurrent.ExecutionContext

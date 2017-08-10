@@ -5,7 +5,7 @@ import akka.actor.{ActorRefFactory, ActorSystem}
 import com.typesafe.config.ConfigFactory
 import com.adendamedia.cornucopia.actors.{ComputeReshardTable, GetRedisSourceNodes, ReshardClusterSupervisor}
 import com.adendamedia.cornucopia.redis.ClusterOperations
-import com.adendamedia.cornucopia.redis.ReshardTableNew
+import com.adendamedia.cornucopia.redis.ReshardTable
 import org.scalatest.{BeforeAndAfterAll, MustMatchers, WordSpecLike}
 import org.mockito.Mockito._
 
@@ -18,7 +18,7 @@ import com.adendamedia.cornucopia.actors.Overseer
 import com.adendamedia.cornucopia.CornucopiaException._
 import org.scalatest.mockito.MockitoSugar
 import ReshardClusterTest._
-import com.adendamedia.cornucopia.redis.ReshardTableNew.ReshardTableType
+import com.adendamedia.cornucopia.redis.ReshardTable.ReshardTableType
 
 class ReshardClusterTest extends TestKit(testSystem)
   with WordSpecLike with BeforeAndAfterAll with MustMatchers with MockitoSugar with ImplicitSender {
@@ -37,7 +37,7 @@ class ReshardClusterTest extends TestKit(testSystem)
   }
 
   trait ReshardClusterConfigTest {
-    import com.adendamedia.cornucopia.ConfigNew.ReshardClusterConfig
+    import com.adendamedia.cornucopia.Config.ReshardClusterConfig
     implicit object ReshardClusterConfigTest extends ReshardClusterConfig {
       val maxNrRetries: Int = 2
       override val expectedTotalNumberSlots: Int = 42 // doesn't matter we're not testing this here
@@ -47,7 +47,7 @@ class ReshardClusterTest extends TestKit(testSystem)
 
   "ReshardClusterSupervisor" must {
     "010 - receive the reshard table and forward it to its sender when resharding with new master" in new ReshardTest with ReshardClusterConfigTest {
-      import ReshardTableNew._
+      import ReshardTable._
       implicit val clusterOperations: ClusterOperations = mock[ClusterOperations]
       val dummySourceNodes = List(new RedisClusterNode)
 
@@ -59,7 +59,7 @@ class ReshardClusterTest extends TestKit(testSystem)
 
       val dummyReshardTable: ReshardTableType = Map.empty[NodeId, List[Slot]]
 
-      implicit val reshardTable: ReshardTableNew = mock[ReshardTableNew]
+      implicit val reshardTable: ReshardTable = mock[ReshardTable]
       implicit val expectedTotalNumberSlots: Int = ReshardClusterConfigTest.expectedTotalNumberSlots
       when(reshardTable.computeReshardTable(dummySourceNodes)).thenReturn(dummyReshardTable)
 
@@ -79,7 +79,7 @@ class ReshardClusterTest extends TestKit(testSystem)
 
   "ReshardClusterSupervisor" must {
     "020 - receive the reshard table and forward it to its sender when resharding without retired master" in new ReshardTest with ReshardClusterConfigTest {
-      import ReshardTableNew._
+      import ReshardTable._
       implicit val clusterOperations: ClusterOperations = mock[ClusterOperations]
       val dummyTargetNodes = List(new RedisClusterNode)
       val dummySourceNode = new RedisClusterNode
@@ -92,7 +92,7 @@ class ReshardClusterTest extends TestKit(testSystem)
 
       val dummyReshardTable: ReshardTableType = Map.empty[NodeId, List[Slot]]
 
-      implicit val reshardTable: ReshardTableNew = mock[ReshardTableNew]
+      implicit val reshardTable: ReshardTable = mock[ReshardTable]
       implicit val expectedTotalNumberSlots: Int = ReshardClusterConfigTest.expectedTotalNumberSlots
       when(reshardTable.computeReshardTablePrime(dummySourceNode, dummyTargetNodes)).thenReturn(dummyReshardTable)
 
@@ -142,12 +142,12 @@ class ReshardClusterTest extends TestKit(testSystem)
     "030 - Retry computing reshard table for new master if there is an error" in new ReshardTest with ReshardClusterConfigTest {
       // NOTE: ReshardClusterSupervisor is the grand-parent of ComputeReshardTable actor, and the error is escalated
       //       from its child
-      import ReshardTableNew._
+      import ReshardTable._
 
       val sourceNodes = List(new RedisClusterNode)
       val reshardTableExceptionMessage = "wat"
 
-      implicit val reshardTable: ReshardTableNew = mock[ReshardTableNew]
+      implicit val reshardTable: ReshardTable = mock[ReshardTable]
       implicit val expectedTotalNumberSlots: Int = ReshardClusterConfigTest.expectedTotalNumberSlots
       when(reshardTable.computeReshardTable(sourceNodes))
         .thenThrow(ReshardTableException(reshardTableExceptionMessage))

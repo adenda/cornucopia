@@ -8,8 +8,8 @@ import com.adendamedia.cornucopia.redis.ClusterOperations
 import com.adendamedia.cornucopia.redis.ClusterOperations._
 import com.adendamedia.cornucopia.redis.Connection
 import com.adendamedia.cornucopia.redis.RedisHelpers
-import com.adendamedia.cornucopia.redis.ReshardTableNew
-import com.adendamedia.cornucopia.ConfigNew.ClusterConnectionsConfig
+import com.adendamedia.cornucopia.redis.ReshardTable
+import com.adendamedia.cornucopia.Config.ClusterConnectionsConfig
 import org.scalatest.{BeforeAndAfterAll, MustMatchers, WordSpecLike}
 import org.mockito.Mockito._
 

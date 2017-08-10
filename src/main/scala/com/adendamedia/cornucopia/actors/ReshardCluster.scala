@@ -5,9 +5,9 @@ import akka.actor.SupervisorStrategy.{Escalate, Restart}
 import akka.actor.{Actor, ActorLogging, ActorRef, ActorRefFactory, OneForOneStrategy, Props, Terminated}
 import akka.pattern.pipe
 import akka.actor.Status.{Failure, Success}
-import com.adendamedia.cornucopia.redis.{ClusterOperations, ReshardTableNew}
+import com.adendamedia.cornucopia.redis.{ClusterOperations, ReshardTable}
 import com.adendamedia.cornucopia.CornucopiaException._
-import com.adendamedia.cornucopia.ConfigNew.ReshardClusterConfig
+import com.adendamedia.cornucopia.Config.ReshardClusterConfig
 import Overseer.{GotReshardTable, OverseerCommand, ReshardWithNewMaster}
 import com.adendamedia.cornucopia.redis.ClusterOperations.CornucopiaGetRedisSourceNodesException
 
@@ -37,7 +37,7 @@ class ReshardClusterSupervisor(computeReshardTableMaker: ActorRefFactory => Acto
                               (implicit clusterOperations: ClusterOperations, config: ReshardClusterConfig)
   extends Actor with ActorLogging {
 
-  import ReshardTableNew.ReshardTableException
+  import ReshardTable.ReshardTableException
   import Overseer._
   import ReshardClusterSupervisor._
 
@@ -102,7 +102,7 @@ class GetRedisSourceNodes(computeReshardTableMaker: ActorRefFactory => ActorRef)
 
   import Overseer._
   import GetRedisSourceNodes._
-  import ReshardTableNew.ReshardTableException
+  import ReshardTable.ReshardTableException
   import akka.pattern.pipe
 
   implicit val ec: ExecutionContext = config.executionContext
@@ -154,17 +154,17 @@ class GetRedisSourceNodes(computeReshardTableMaker: ActorRefFactory => ActorRef)
 }
 
 object ComputeReshardTable {
-  def props(implicit reshardTable: ReshardTableNew, config: ReshardClusterConfig): Props =
+  def props(implicit reshardTable: ReshardTable, config: ReshardClusterConfig): Props =
     Props(new ComputeReshardTable)
 
   val name = "computeReshardTable"
 }
 
-class ComputeReshardTable(implicit reshardTable: ReshardTableNew, config: ReshardClusterConfig)
+class ComputeReshardTable(implicit reshardTable: ReshardTable, config: ReshardClusterConfig)
   extends Actor with ActorLogging {
 
   import GetRedisSourceNodes._
-  import ReshardTableNew.ReshardTableType
+  import ReshardTable.ReshardTableType
 
   override def receive: Receive = {
     case (uri: RedisURI, sourceNodes: SourceNodes) =>

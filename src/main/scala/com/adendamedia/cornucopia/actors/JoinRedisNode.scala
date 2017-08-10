@@ -6,7 +6,7 @@ import akka.pattern.pipe
 import com.adendamedia.cornucopia.redis.ClusterOperations
 import com.adendamedia.cornucopia.CornucopiaException._
 import Overseer.OverseerCommand
-import com.adendamedia.cornucopia.ConfigNew.JoinRedisNodeConfig
+import com.adendamedia.cornucopia.Config.JoinRedisNodeConfig
 import com.lambdaworks.redis.RedisURI
 
 import scala.concurrent.ExecutionContext

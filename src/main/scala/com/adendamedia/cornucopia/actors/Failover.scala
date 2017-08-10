@@ -5,9 +5,9 @@ import akka.actor.SupervisorStrategy.{Escalate, Restart}
 import akka.actor.{Actor, ActorLogging, ActorRef, ActorRefFactory, OneForOneStrategy, Props, Terminated}
 import akka.pattern.pipe
 import akka.actor.Status.{Failure, Success}
-import com.adendamedia.cornucopia.redis.{ClusterOperations, ReshardTableNew}
+import com.adendamedia.cornucopia.redis.{ClusterOperations, ReshardTable}
 import com.adendamedia.cornucopia.CornucopiaException._
-import com.adendamedia.cornucopia.ConfigNew.FailoverConfig
+import com.adendamedia.cornucopia.Config.FailoverConfig
 import Overseer._
 import com.adendamedia.cornucopia.actors.FailoverSupervisor.DoFailover
 

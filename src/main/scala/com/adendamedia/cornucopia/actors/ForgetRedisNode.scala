@@ -4,7 +4,7 @@ import akka.actor.SupervisorStrategy.Restart
 import akka.actor.{Actor, ActorLogging, ActorRef, OneForOneStrategy, Props, Terminated}
 import akka.pattern.pipe
 import com.adendamedia.cornucopia.redis.ClusterOperations
-import com.adendamedia.cornucopia.ConfigNew.ForgetRedisNodeConfig
+import com.adendamedia.cornucopia.Config.ForgetRedisNodeConfig
 import com.adendamedia.cornucopia.CornucopiaException._
 import Overseer.OverseerCommand
 import com.lambdaworks.redis.RedisURI

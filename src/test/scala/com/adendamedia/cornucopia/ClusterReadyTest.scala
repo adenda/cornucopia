@@ -6,8 +6,8 @@ import com.typesafe.config.ConfigFactory
 import com.adendamedia.cornucopia.actors._
 import com.adendamedia.cornucopia.redis.ClusterOperations
 import com.adendamedia.cornucopia.redis.Connection
-import com.adendamedia.cornucopia.redis.ReshardTableNew
-import com.adendamedia.cornucopia.ConfigNew.ClusterReadyConfig
+import com.adendamedia.cornucopia.redis.ReshardTable
+import com.adendamedia.cornucopia.Config.ClusterReadyConfig
 import org.scalatest.{BeforeAndAfterAll, MustMatchers, WordSpecLike}
 import org.mockito.Mockito._
 

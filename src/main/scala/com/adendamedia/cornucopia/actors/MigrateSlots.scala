@@ -5,10 +5,10 @@ import akka.actor.SupervisorStrategy.{Escalate, Restart, Resume}
 import akka.actor.{Actor, ActorLogging, ActorRef, ActorRefFactory, OneForOneStrategy, PoisonPill, Props, Terminated}
 import akka.pattern.pipe
 import akka.actor.Status.{Failure, Success}
-import com.adendamedia.cornucopia.redis.{ClusterOperations, ReshardTableNew}
-import com.adendamedia.cornucopia.redis.ReshardTableNew._
+import com.adendamedia.cornucopia.redis.{ClusterOperations, ReshardTable}
+import com.adendamedia.cornucopia.redis.ReshardTable._
 import com.adendamedia.cornucopia.CornucopiaException._
-import com.adendamedia.cornucopia.ConfigNew.MigrateSlotsConfig
+import com.adendamedia.cornucopia.Config.MigrateSlotsConfig
 import Overseer.{JobCompleted, MigrateSlotsForNewMaster, OverseerCommand, ReshardWithNewMaster}
 import com.adendamedia.cornucopia.redis.ClusterOperations.{MigrateSlotKeysMovedException, SetSlotAssignmentException}
 
@@ -145,7 +145,7 @@ class MigrateSlotsJobManager(migrateSlotWorkerMaker: (ActorRefFactory, ActorRef)
     * @param table the reshard table
     * @return 2-tuple containing node ID and slot to migrate
     */
-  private def getMigrateJobSet(table: ReshardTableNew.ReshardTableType): Set[(NodeId, Slot)] = {
+  private def getMigrateJobSet(table: ReshardTable.ReshardTableType): Set[(NodeId, Slot)] = {
     for {
       (nodeId, slots) <- table.toSet
       slot <- slots

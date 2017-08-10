@@ -6,7 +6,7 @@ import com.adendamedia.cornucopia.actors._
 import com.adendamedia.cornucopia.redis._
 
 object Cornucopia {
-  import ConfigNew._
+  import Config._
 
   trait JoinRedisNode {
     implicit val joinRedisNodeConfig: JoinRedisNodeConfig
@@ -67,9 +67,9 @@ object Cornucopia {
 
 class Cornucopia(implicit val sharedActorSystem: ActorSystem) {
   import Cornucopia._
-  import ConfigNew._
+  import Config._
 
-  private val config = new ConfigNew
+  private val config = new Config
 
   private val system: ActorSystem = config.actorSystem
 
@@ -87,7 +87,7 @@ class Cornucopia(implicit val sharedActorSystem: ActorSystem) {
   object ReshardClusterImpl extends ReshardCluster {
     implicit val reshardClusterConfig: ReshardClusterConfig = config.Cornucopia.ReshardCluster
     implicit val clusterOperations: ClusterOperations = clusterOperationsImpl
-    implicit val reshardTable: ReshardTableNew = ReshardTableNewImpl
+    implicit val reshardTable: ReshardTable = ReshardTableImpl
     val computeReshardTableFactory: ActorRefFactory => ActorRef =
       (f: ActorRefFactory) => f.actorOf(ComputeReshardTable.props, ComputeReshardTable.name)
     val supervisorProps: Props = ReshardClusterSupervisor.props(computeReshardTableFactory)

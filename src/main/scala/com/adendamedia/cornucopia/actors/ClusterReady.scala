@@ -1,6 +1,6 @@
 package com.adendamedia.cornucopia.actors
 
-import com.adendamedia.cornucopia.ConfigNew.ClusterReadyConfig
+import com.adendamedia.cornucopia.Config.ClusterReadyConfig
 import com.adendamedia.cornucopia.redis.ClusterOperations
 import akka.actor.{Actor, ActorLogging, ActorRef, OneForOneStrategy, Props, SupervisorStrategy}
 import akka.actor.SupervisorStrategy.Restart

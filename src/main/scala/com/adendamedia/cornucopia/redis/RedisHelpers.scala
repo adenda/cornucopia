@@ -40,7 +40,7 @@ trait RedisHelpers {
 
 object RedisHelpersImpl extends RedisHelpers {
   import ClusterOperations._
-  import ReshardTableNew._
+  import ReshardTable._
   import RedisHelpers._
 
   def compareUsingSlotsCount(nodes: List[RedisClusterNode],
