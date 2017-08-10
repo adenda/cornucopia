@@ -43,7 +43,7 @@ curl -X POST \
     
 #### Using Cornucopia as a library in your application
 
-Include Cornucopia in your `build.sbt` file: `"com.adendamedia" %% "cornucopia" % "0.5.0"`. Control messages are sent to Cornucopia using an ActorRef that must be imported.
+Include Cornucopia in your `build.sbt` file: `"com.adendamedia" %% "cornucopia" % "0.6.0"`. Control messages are sent to Cornucopia using an ActorRef that must be imported.
 
 ```scala
 import com.adendamedia.cornucopia.Library
