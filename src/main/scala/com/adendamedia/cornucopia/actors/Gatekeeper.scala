@@ -45,7 +45,6 @@ class Gatekeeper extends Actor with ActorLogging {
     createRedisUri(redisNodeIp) match {
       case Success(redisUri: RedisURI) =>
         log.info(s"Task accepted: ${operation.message} ${redisUri.toURI}")
-        ref ! TaskAccepted
         dispatcher.tell(DispatchTask(operation, redisUri), ref)
       case Failure(_) =>
         log.error(s"Could not process submitted task: Redis node Ip '$redisNodeIp' is invalid.")

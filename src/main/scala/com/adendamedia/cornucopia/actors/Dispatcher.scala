@@ -1,8 +1,8 @@
 package com.adendamedia.cornucopia.actors
 
 import com.adendamedia.cornucopia.redis._
-
 import akka.actor.{Actor, ActorLogging, ActorRef, Props}
+import com.adendamedia.cornucopia.actors.Gatekeeper.{TaskAccepted, TaskDenied}
 import com.lambdaworks.redis.RedisURI
 
 /**
@@ -39,6 +39,7 @@ class Dispatcher extends Actor with ActorLogging {
     case task: DispatchTask =>
       publishTask(task.operation, task.redisURI)
       val dispatchInformation = DispatchInformation(task, sender)
+      sender ! TaskAccepted
       context.become(dispatching(dispatchInformation))
   }
 
@@ -47,6 +48,7 @@ class Dispatcher extends Actor with ActorLogging {
       val forbiddenTask = s"${task.operation.message} ${task.redisURI}"
       val currentTask = s"${dispatchInformation.task.operation.message} ${dispatchInformation.task.redisURI}"
       log.warning(s"Cannot dispatch task '$forbiddenTask' while waiting on task '$currentTask'")
+      sender ! TaskDenied
     case event: NodeAdded =>
       log.info(s"Redis node '${event.uri}' successfully added to cluster")
       val ref = dispatchInformation.ref
