@@ -58,7 +58,7 @@ class ReplicatePoorestMasterTest extends TestKit(ActorSystem("ReplicatePoorestMa
       )
 
       val props = ReplicatePoorestMasterSupervisor.props
-      val replicatePoorestMasterSupervisor = TestActorRef[ReplicatePoorestMasterSupervisor](props)
+      val replicatePoorestMasterSupervisor = TestActorRef[ReplicatePoorestMasterSupervisor[_]](props)
 
       val message = ReplicatePoorestMasterUsingSlave(newSlaveRedisURI)
 
@@ -81,7 +81,7 @@ class ReplicatePoorestMasterTest extends TestKit(ActorSystem("ReplicatePoorestMa
       )
 
       val props = ReplicatePoorestMasterSupervisor.props
-      val replicatePoorestMasterSupervisor = TestActorRef[ReplicatePoorestMasterSupervisor](props)
+      val replicatePoorestMasterSupervisor = TestActorRef[ReplicatePoorestMasterSupervisor[_]](props)
 
       val message = ReplicatePoorestRemainingMasterUsingSlave(slaveRedisURI, excludedMasters)
 

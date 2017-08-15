@@ -42,7 +42,7 @@ class GetSlavesOfMasterTest extends TestKit(ActorSystem("GetSlavesOfMasterTest")
       implicit val executionContext: ExecutionContext = system.dispatcher
       when(clusterOperations.getSlavesOfMaster(redisURI)).thenReturn(Future.successful(dummySlaves))
 
-      val getSlavesOfMasterSupervisor = TestActorRef[GetSlavesOfMasterSupervisor](GetSlavesOfMasterSupervisor.props)
+      val getSlavesOfMasterSupervisor = TestActorRef[GetSlavesOfMasterSupervisor[_]](GetSlavesOfMasterSupervisor.props)
 
       val message = GetSlavesOf(redisURI)
 

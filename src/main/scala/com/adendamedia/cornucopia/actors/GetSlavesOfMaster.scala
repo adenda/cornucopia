@@ -6,6 +6,7 @@ import akka.actor.{Actor, ActorLogging, ActorRef, OneForOneStrategy, Props, Supe
 import com.lambdaworks.redis.RedisURI
 import akka.actor.SupervisorStrategy.Restart
 import akka.pattern.pipe
+import Overseer.GetSlavesOf
 
 import scala.concurrent.duration._
 import com.adendamedia.cornucopia.CornucopiaException.FailedOverseerCommand
@@ -22,8 +23,9 @@ object GetSlavesOfMasterSupervisor {
   case object Retry
 }
 
-class GetSlavesOfMasterSupervisor(implicit config: GetSlavesOfMasterConfig, clusterOperations: ClusterOperations)
-  extends CornucopiaSupervisor {
+class GetSlavesOfMasterSupervisor[C <: GetSlavesOf](implicit config: GetSlavesOfMasterConfig,
+                                                    clusterOperations: ClusterOperations)
+  extends CornucopiaSupervisor[GetSlavesOf] {
 
   import Overseer._
   import GetSlavesOfMasterSupervisor._
@@ -47,7 +49,7 @@ class GetSlavesOfMasterSupervisor(implicit config: GetSlavesOfMasterConfig, clus
       context.become(processing(msg, sender))
   }
 
-  protected def processing(command: OverseerCommand, ref: ActorRef): Receive = {
+  protected def processing[D <: GetSlavesOf](command: D, ref: ActorRef): Receive = {
     case Retry =>
       getSlavesOfMaster ! command
     case event: GotSlavesOf =>

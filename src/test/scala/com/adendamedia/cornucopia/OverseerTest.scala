@@ -37,6 +37,7 @@ class OverseerTest extends TestKit(testSystem)
       val executionContext: ExecutionContext = system.dispatcher
       val maxNrRetries: Int = 2
       val refreshTimeout: Int = 0
+      val retryBackoffTime: Int = 0
     }
     implicit val joinRedisNodeMaxNrRetries: Int = 2
     val cornucopiaRedisConnectionExceptionMessage = "wat"
@@ -79,7 +80,7 @@ class OverseerTest extends TestKit(testSystem)
 
   trait SuccessTest extends Test {
     when(clusterOperations.addNodeToCluster(redisURI)).thenReturn(Future.successful(redisURI))
-    val joinRedisNodeSupervisor = TestActorRef[JoinRedisNodeSupervisor](JoinRedisNodeSupervisor.props)
+    val joinRedisNodeSupervisor = TestActorRef[JoinRedisNodeSupervisor[_]](JoinRedisNodeSupervisor.props)
   }
 
   trait MigrateTest {

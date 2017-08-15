@@ -51,7 +51,7 @@ class FailoverTest extends TestKit(testSystem)
       when(clusterOperations.failoverMaster(redisURI)).thenReturn(Future.successful())
       when(clusterOperations.verifyFailover(redisURI, Master)).thenReturn(Future.successful(true))
 
-      val failoverSupervisor = TestActorRef[FailoverSupervisor](FailoverSupervisor.props)
+      val failoverSupervisor = TestActorRef[FailoverSupervisor[_]](FailoverSupervisor.props)
 
       val msg = FailoverMaster(redisURI)
 
@@ -66,7 +66,7 @@ class FailoverTest extends TestKit(testSystem)
       when(clusterOperations.failoverSlave(redisURI)).thenReturn(Future.successful())
       when(clusterOperations.verifyFailover(redisURI, Slave)).thenReturn(Future.successful(true))
 
-      val failoverSupervisor = TestActorRef[FailoverSupervisor](FailoverSupervisor.props)
+      val failoverSupervisor = TestActorRef[FailoverSupervisor[_]](FailoverSupervisor.props)
 
       val msg = FailoverSlave(redisURI)
 
@@ -81,7 +81,7 @@ class FailoverTest extends TestKit(testSystem)
       when(clusterOperations.failoverSlave(redisURI)).thenReturn(Future.successful())
       when(clusterOperations.verifyFailover(redisURI, Slave)).thenReturn(Future.successful(false))
 
-      val failoverSupervisor = TestActorRef[FailoverSupervisor](FailoverSupervisor.props)
+      val failoverSupervisor = TestActorRef[FailoverSupervisor[_]](FailoverSupervisor.props)
 
       val msg = FailoverSlave(redisURI)
 

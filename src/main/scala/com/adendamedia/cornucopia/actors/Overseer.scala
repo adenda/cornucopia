@@ -60,15 +60,17 @@ object Overseer {
   case object ClusterIsReady
   case object ClusterNotReady
 
+  trait MigrateSlotsCommand extends OverseerCommand
+
   case class MigrateSlotsForNewMaster(newMasterUri: RedisURI, connections: ClusterOperations.ClusterConnectionsType,
                                       redisUriToNodeId: RedisUriToNodeId, salad: SaladAPI,
-                                      reshardTable: ReshardTableType) extends OverseerCommand
+                                      reshardTable: ReshardTableType) extends MigrateSlotsCommand
 
   case class MigrateSlotsWithoutRetiredMaster(retiredMasterUri: RedisURI, connections: ClusterOperations.ClusterConnectionsType,
                                               redisUriToNodeId: RedisUriToNodeId,
                                               nodeIdToRedisUri: NodeIdToRedisUri,
                                               salad: SaladAPI,
-                                              reshardTable: ReshardTableType) extends OverseerCommand
+                                              reshardTable: ReshardTableType) extends MigrateSlotsCommand
 
   case class JobCompleted(job: OverseerCommand)
 
@@ -78,9 +80,12 @@ object Overseer {
   case object ClusterConnectionsValid
   case object ClusterConnectionsInvalid
 
-  case class ReplicatePoorestMasterUsingSlave(slaveUri: RedisURI) extends OverseerCommand
+  trait ReplicatePoorestMasterCommand extends OverseerCommand
+  case class ReplicatePoorestMasterUsingSlave(slaveUri: RedisURI) extends ReplicatePoorestMasterCommand
   case class ReplicatePoorestRemainingMasterUsingSlave(slaveUri: RedisURI,
-                                                       excludedMasters: List[RedisURI]) extends OverseerCommand
+                                                       excludedMasters: List[RedisURI])
+    extends ReplicatePoorestMasterCommand
+
   case class ReplicateMaster(slaveUri: RedisURI, masterNodeId: ClusterOperations.NodeId, ref: ActorRef)
     extends OverseerCommand
   case class ReplicatedMaster(newSlaveUri: RedisURI)

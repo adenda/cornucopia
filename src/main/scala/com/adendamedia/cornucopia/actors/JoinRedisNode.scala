@@ -12,32 +12,56 @@ import com.lambdaworks.redis.RedisURI
 import scala.concurrent.ExecutionContext
 import scala.concurrent.duration._
 
+import Overseer.JoinNode
+
 object JoinRedisNodeSupervisor {
   def props(implicit config: JoinRedisNodeConfig, clusterOperations: ClusterOperations) =
     Props(new JoinRedisNodeSupervisor)
 
   val name = "joinRedisNodeSupervisor"
+
+  case object Retry
 }
 
 /**
   * The supervisor actor for the join redis node action is used to signal a failed attempt to join a node by throwing an
   * exception.
   */
-class JoinRedisNodeSupervisor(implicit config: JoinRedisNodeConfig,
-                              clusterOperations: ClusterOperations) extends Actor with ActorLogging {
+class JoinRedisNodeSupervisor[C <: JoinNode](implicit config: JoinRedisNodeConfig,
+                              clusterOperations: ClusterOperations) extends CornucopiaSupervisor[JoinNode] {
   import Overseer._
+  import JoinRedisNodeSupervisor._
 
-  val joinRedisNodeProps = JoinRedisNode.props
-  val joinRedisNode = context.actorOf(joinRedisNodeProps, JoinRedisNode.name)
+  private val joinRedisNodeProps = JoinRedisNode.props
+  private val joinRedisNode = context.actorOf(joinRedisNodeProps, JoinRedisNode.name)
   context.watch(joinRedisNode)
 
   override def supervisorStrategy = OneForOneStrategy(config.maxNrRetries) {
-    case _: FailedOverseerCommand => Restart
+    case _: FailedOverseerCommand =>
+      implicit val executionContext: ExecutionContext = config.executionContext
+      context.system.scheduler.scheduleOnce(config.retryBackoffTime.seconds) {
+        self ! Retry
+      }
+      Restart
   }
 
-  override def receive: Receive = {
-    case join: JoinNode => joinRedisNode forward join
+  def receive: Receive = accepting
+
+  override def accepting: Receive = {
+    case join: JoinNode =>
+      joinRedisNode ! join
+      context.become(processing[JoinNode](join, sender))
+  }
+
+  override def processing[D <: JoinNode](command: D, ref: ActorRef): Receive = {
+    case evt: NodeJoinedEvent =>
+      ref ! evt
+      context.unbecome()
+    case Retry =>
+      log.info(s"Retrying to join redis node ${command.redisURI}")
+      joinRedisNode ! command
     case Terminated(_) =>
+      context.unbecome()
       throw FailedAddingRedisNodeException(s"Could not join Redis node to cluster after ${config.maxNrRetries} retries")
   }
 }
@@ -62,17 +86,8 @@ class JoinRedisNode(implicit clusterOperations: ClusterOperations, config: JoinR
   import Overseer._
   import JoinRedisNode._
 
-  override def preRestart(reason: Throwable, message: Option[Any]): Unit = {
-    // Retry by sending the same message back to self
-    message match {
-      case Some(Fail(msg)) => self ! msg
-      case _ => ;
-    }
-    super.preRestart(reason, message)
-  }
-
-  val delegateProps = JoinRedisNodeDelegate.props
-  val delegate = context.actorOf(delegateProps, JoinRedisNodeDelegate.name)
+  private val delegateProps = JoinRedisNodeDelegate.props
+  private val delegate = context.actorOf(delegateProps, JoinRedisNodeDelegate.name)
 
   override def receive: Receive = accepting
 
@@ -89,10 +104,9 @@ class JoinRedisNode(implicit clusterOperations: ClusterOperations, config: JoinR
 
   private def delegating(nodeType: AddingNodeType, ref: ActorRef): Receive = {
     case Fail(message: OverseerCommand) =>
-      log.error("fail")
       throw FailedOverseerCommand(message)
     case Passthrough(uri: RedisURI) =>
-      log.info("passthrough")
+      log.info("Node joined")
       nodeType match {
         case AddingMasterNode =>
           implicit val executionContext: ExecutionContext = config.executionContext
@@ -146,8 +160,6 @@ class JoinRedisNodeDelegate(implicit clusterOperations: ClusterOperations) exten
       case e: CornucopiaRedisConnectionException =>
         log.error(s"Failed to join node ${join.redisURI.toURI} with error: ${e.message}")
         Fail(join)
-      case _ =>
-        log.error(s"Wat!")
     } pipeTo ref
   }
 

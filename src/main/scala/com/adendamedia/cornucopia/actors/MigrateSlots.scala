@@ -7,7 +7,7 @@ import com.adendamedia.cornucopia.redis.{ClusterOperations, ReshardTable}
 import com.adendamedia.cornucopia.redis.ReshardTable._
 import com.adendamedia.cornucopia.CornucopiaException._
 import com.adendamedia.cornucopia.Config.MigrateSlotsConfig
-import Overseer.{JobCompleted, OverseerCommand}
+import Overseer.{JobCompleted, OverseerCommand, MigrateSlotsCommand}
 import com.adendamedia.cornucopia.redis.ClusterOperations.{MigrateSlotKeysMovedException, SetSlotAssignmentException}
 import scala.concurrent.ExecutionContext
 import com.lambdaworks.redis.RedisURI
@@ -23,9 +23,9 @@ object MigrateSlotsSupervisor {
 /**
   * Actor hierarchy for doing the actual work during a reshard, which is to migrate slots between Redis nodes.
   */
-class MigrateSlotsSupervisor(migrateSlotsWorkerMaker: (ActorRefFactory, ActorRef) => ActorRef)
+class MigrateSlotsSupervisor[C <: MigrateSlotsCommand](migrateSlotsWorkerMaker: (ActorRefFactory, ActorRef) => ActorRef)
                             (implicit clusterOperations: ClusterOperations, config: MigrateSlotsConfig)
-  extends CornucopiaSupervisor {
+  extends CornucopiaSupervisor[MigrateSlotsCommand] {
 
   import Overseer._
 
@@ -45,7 +45,7 @@ class MigrateSlotsSupervisor(migrateSlotsWorkerMaker: (ActorRefFactory, ActorRef
       context.become(processing(migrateCommand, sender))
   }
 
-  override def processing(command: OverseerCommand, ref: ActorRef): Receive = {
+  override def processing[D <: MigrateSlotsCommand](command: D, ref: ActorRef): Receive = {
     case Reset =>
       log.debug("Reset migrate slot supervisor")
       context.become(accepting)

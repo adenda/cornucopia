@@ -6,6 +6,7 @@ import akka.pattern.pipe
 import com.adendamedia.cornucopia.redis.ClusterOperations
 import com.adendamedia.cornucopia.Config.ForgetRedisNodeConfig
 import scala.concurrent.duration._
+import Overseer.ForgetNode
 
 import scala.concurrent.ExecutionContext
 
@@ -18,8 +19,9 @@ object ForgetRedisNodeSupervisor {
   case object Retry
 }
 
-class ForgetRedisNodeSupervisor(implicit config: ForgetRedisNodeConfig, clusterOperations: ClusterOperations)
-  extends CornucopiaSupervisor {
+class ForgetRedisNodeSupervisor[C <: ForgetNode](implicit config: ForgetRedisNodeConfig,
+                                                 clusterOperations: ClusterOperations)
+  extends CornucopiaSupervisor[ForgetNode] {
 
   import Overseer._
   import ClusterOperations._
@@ -43,7 +45,7 @@ class ForgetRedisNodeSupervisor(implicit config: ForgetRedisNodeConfig, clusterO
       context.become(processing(cmd, sender))
   }
 
-  protected def processing(command: OverseerCommand, ref: ActorRef): Receive = {
+  protected def processing[D <: ForgetNode](command: D, ref: ActorRef): Receive = {
     case event: NodeForgotten =>
       implicit val executionContext: ExecutionContext = config.executionContext
       context.system.scheduler.scheduleOnce(config.refreshTimeout.seconds) {

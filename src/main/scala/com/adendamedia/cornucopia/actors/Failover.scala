@@ -7,6 +7,7 @@ import com.adendamedia.cornucopia.redis.ClusterOperations
 import com.adendamedia.cornucopia.CornucopiaException._
 import com.adendamedia.cornucopia.Config.FailoverConfig
 import Overseer._
+import Overseer.FailoverCommand
 import com.adendamedia.cornucopia.actors.FailoverSupervisor.DoFailover
 
 import scala.concurrent.duration._
@@ -30,8 +31,8 @@ object FailoverSupervisor {
   case object Retry
 }
 
-class FailoverSupervisor(implicit config: FailoverConfig, clusterOperations: ClusterOperations)
-  extends CornucopiaSupervisor {
+class FailoverSupervisor[C <: FailoverCommand](implicit config: FailoverConfig, clusterOperations: ClusterOperations)
+  extends CornucopiaSupervisor[FailoverCommand] {
 
   import FailoverSupervisor._
   import ClusterOperations._
@@ -51,7 +52,7 @@ class FailoverSupervisor(implicit config: FailoverConfig, clusterOperations: Clu
       context.become(processing(msg, sender))
   }
 
-  protected def processing(command: OverseerCommand, ref: ActorRef): Receive = {
+  protected def processing[D <: FailoverCommand](command: D, ref: ActorRef): Receive = {
     case FailoverComplete =>
       implicit val executionContext: ExecutionContext = config.executionContext
       context.system.scheduler.scheduleOnce(config.refreshTimeout.seconds) {

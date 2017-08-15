@@ -13,6 +13,7 @@ object CornucopiaException {
   case class CornucopiaRedisConnectionException(message: String, reason: Throwable = None.orNull)
     extends Exception(message, reason) with CornucopiaException with Serializable
 
+  // TODO: Give this a message so that error logs are descriptive
   @SerialVersionUID(1L)
   case class FailedOverseerCommand(overseerCommand: OverseerCommand) extends Exception with Serializable
 

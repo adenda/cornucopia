@@ -50,7 +50,7 @@ class ForgetRedisNodeTest extends TestKit(testSystem)
       )
 
       val props = ForgetRedisNodeSupervisor.props
-      val forgetRedisNodeSupervisor = TestActorRef[ForgetRedisNodeSupervisor](props)
+      val forgetRedisNodeSupervisor = TestActorRef[ForgetRedisNodeSupervisor[_]](props)
 
       val msg = ForgetNode(redisURI)
 
@@ -68,7 +68,7 @@ class ForgetRedisNodeTest extends TestKit(testSystem)
       )
 
       val props = ForgetRedisNodeSupervisor.props
-      val forgetRedisNodeSupervisor = TestActorRef[ForgetRedisNodeSupervisor](props)
+      val forgetRedisNodeSupervisor = TestActorRef[ForgetRedisNodeSupervisor[_]](props)
 
       val msg = ForgetNode(redisURI)
 

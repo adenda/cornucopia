@@ -5,6 +5,7 @@ import com.adendamedia.cornucopia.redis.ClusterOperations
 import akka.actor.{Actor, ActorLogging, ActorRef, OneForOneStrategy, Props}
 import akka.actor.SupervisorStrategy.Restart
 import akka.pattern.pipe
+import Overseer.ReplicatePoorestMasterCommand
 
 import scala.concurrent.ExecutionContext
 
@@ -17,8 +18,10 @@ object ReplicatePoorestMasterSupervisor {
   case object Retry
 }
 
-class ReplicatePoorestMasterSupervisor(implicit config: ReplicatePoorestMasterConfig,
-                                       clusterOperations: ClusterOperations) extends CornucopiaSupervisor {
+class ReplicatePoorestMasterSupervisor[C <: ReplicatePoorestMasterCommand](implicit config: ReplicatePoorestMasterConfig,
+                                                                           clusterOperations: ClusterOperations)
+  extends CornucopiaSupervisor[ReplicatePoorestMasterCommand] {
+
   import Overseer._
   import ClusterOperations._
   import ReplicatePoorestMasterSupervisor._
@@ -45,7 +48,7 @@ class ReplicatePoorestMasterSupervisor(implicit config: ReplicatePoorestMasterCo
       context.become(processing(msg, sender))
   }
 
-  override def processing(command: OverseerCommand, ref: ActorRef): Receive = {
+  override def processing[D <: ReplicatePoorestMasterCommand](command: D, ref: ActorRef): Receive = {
     case msg: ReplicatedMaster =>
       log.info(s"Successfully replicated master with new slave: ${msg.newSlaveUri}")
       ref ! msg

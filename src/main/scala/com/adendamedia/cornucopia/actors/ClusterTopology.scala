@@ -6,6 +6,8 @@ import akka.actor.SupervisorStrategy.Restart
 import com.adendamedia.cornucopia.redis.ClusterOperations
 import com.adendamedia.cornucopia.Config.ClusterTopologyConfig
 import com.lambdaworks.redis.cluster.models.partitions.RedisClusterNode
+import Overseer.LogTopology
+import Overseer.OverseerCommand
 
 import scala.concurrent.ExecutionContext
 
@@ -16,8 +18,8 @@ object ClusterTopologySupervisor {
   val name = "clusterTopologySupervisor"
 }
 
-class ClusterTopologySupervisor(implicit clusterOperations: ClusterOperations,
-                                config: ClusterTopologyConfig) extends CornucopiaSupervisor {
+class ClusterTopologySupervisor[C <: OverseerCommand](implicit clusterOperations: ClusterOperations,
+                                config: ClusterTopologyConfig) extends CornucopiaSupervisor[OverseerCommand] {
   import Overseer._
 
   private val clusterTopology = context.actorOf(ClusterTopology.props, ClusterTopology.name)
@@ -37,7 +39,7 @@ class ClusterTopologySupervisor(implicit clusterOperations: ClusterOperations,
       context.become(processing(LogTopology, sender))
   }
 
-  protected def processing(command: OverseerCommand, ref: ActorRef): Receive = {
+  protected def processing[D <: OverseerCommand](command: D, ref: ActorRef): Receive = {
     case TopologyLogged =>
       ref ! TopologyLogged
       context.unbecome()
