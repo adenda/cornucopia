@@ -10,6 +10,7 @@ import com.adendamedia.cornucopia.Config.MigrateSlotsConfig
 import Overseer.{JobCompleted, OverseerCommand, MigrateSlotsCommand}
 import com.adendamedia.cornucopia.redis.ClusterOperations.{MigrateSlotKeysMovedException, SetSlotAssignmentException}
 import scala.concurrent.ExecutionContext
+import scala.concurrent.duration._
 import com.lambdaworks.redis.RedisURI
 
 object MigrateSlotsSupervisor {
@@ -272,6 +273,8 @@ object MigrateSlotWorker {
     def uuid = java.util.UUID.randomUUID.toString
     "migrateSlotWorker-" + uuid
   }
+
+  case object Retry
 }
 
 class MigrateSlotWorker(jobManager: ActorRef)
@@ -279,6 +282,7 @@ class MigrateSlotWorker(jobManager: ActorRef)
   Actor with ActorLogging {
 
   import MigrateSlotsJobManager._
+  import MigrateSlotWorker._
 
   val setSlotAssignmentWorker: ActorRef =
     context.actorOf(SetSlotAssignmentWorker.props(self), SetSlotAssignmentWorker.name)
@@ -287,10 +291,13 @@ class MigrateSlotWorker(jobManager: ActorRef)
 
   jobManager ! GetJob
 
-  override def supervisorStrategy = OneForOneStrategy() {
+  override def supervisorStrategy = OneForOneStrategy(config.maxNrRetries) {
     case e: MigrateSlotsException =>
       e.reason match {
-        case Some(t: SetSlotAssignmentException) => Restart
+        case Some(t: SetSlotAssignmentException) =>
+          implicit val executionContext: ExecutionContext = config.executionContext
+          context.system.scheduler.scheduleOnce(config.setSlotAssignmentRetryBackoff.seconds)(self ! Retry)
+          Restart
         case _ =>
           log.error(s"Fatal error trying to migrate slot {}", e.reason.getOrElse(new Exception("Unknown error")))
           Escalate
@@ -298,12 +305,21 @@ class MigrateSlotWorker(jobManager: ActorRef)
   }
 
   override def receive: Receive = {
-    case job: MigrateSlotJob => setSlotAssignmentWorker ! job
+    case job: MigrateSlotJob =>
+      setSlotAssignmentWorker ! job
+      context.become(migratingSlot(job))
+  }
+
+  def migratingSlot(job: MigrateSlotJob): Receive = {
     case complete: JobCompleted =>
       log.debug(s"Job complete")
       implicit val executionContext: ExecutionContext = config.executionContext
       jobManager ! complete
       jobManager ! GetJob
+      context.unbecome()
+    case Retry =>
+      log.info(s"Retrying to set slot assignment for slot ${job.slot}")
+      setSlotAssignmentWorker ! job
   }
 
 }

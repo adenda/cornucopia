@@ -42,6 +42,7 @@ object Config {
     val executionContext: ExecutionContext
     val maxNrRetries: Int
     val numberOfWorkers: Int
+    val setSlotAssignmentRetryBackoff: Int
   }
 
   trait ReplicatePoorestMasterConfig {
@@ -116,6 +117,7 @@ class Config(implicit val sharedActorSystem: ActorSystem) {
       val executionContext: ExecutionContext = actorSystem.dispatchers.lookup("akka.actor.migrate-slots-dispatcher")
       val maxNrRetries: Int = config.getInt("migrate.slots.max.retries")
       val numberOfWorkers: Int = config.getInt("migrate.slots.workers")
+      val setSlotAssignmentRetryBackoff: Int = config.getInt("migrate.slots.set.slot.assignment.retry.backoff")
     }
 
     object ReplicatePoorestMaster extends ReplicatePoorestMasterConfig {

@@ -38,8 +38,9 @@ class MigrateSlotsTest extends TestKit(testSystem)
     val redisURI: RedisURI = RedisURI.create(uriString)
     implicit object MigrateSlotsConfigTest extends MigrateSlotsConfig {
       val executionContext: ExecutionContext = system.dispatcher
-      val maxNrRetries: Int = 10
+      val maxNrRetries: Int = 2
       val numberOfWorkers: Int = 2
+      val setSlotAssignmentRetryBackoff: Int = 0
     }
     implicit val clusterOperations: ClusterOperations = mock[ClusterOperations]
 
@@ -50,6 +51,8 @@ class MigrateSlotsTest extends TestKit(testSystem)
     val testNodeIdToRedisUri: Map[NodeId, RedisURI] = Map(testTargetNodeId -> redisURI)
 
     val dummySaladApi: Connection.SaladAPI = mock[Connection.SaladAPI]
+
+    val dummyConnections: ClusterConnectionsType = Map.empty[NodeId, Connection.Salad]
   }
 
   trait SuccessTestForAddingNewMaster extends TestConfig {
@@ -60,8 +63,6 @@ class MigrateSlotsTest extends TestKit(testSystem)
       "node3" -> List(6,7))
 
     val migrateSlotWorkerMaker = (f: ActorRefFactory, m: ActorRef) => f.actorOf(MigrateSlotWorker.props(m), MigrateSlotWorker.name)
-
-    val dummyConnections: ClusterConnectionsType = Map.empty[NodeId, Connection.Salad]
 
     when(
       clusterOperations.setSlotAssignment(anyInt(), anyString(), anyString(), anyObject())(anyObject())
@@ -96,8 +97,6 @@ class MigrateSlotsTest extends TestKit(testSystem)
 
     val migrateSlotWorkerMaker = (f: ActorRefFactory, m: ActorRef) => f.actorOf(MigrateSlotWorker.props(m), MigrateSlotWorker.name)
 
-    val dummyConnections: ClusterConnectionsType = Map.empty[NodeId, Connection.Salad]
-
     when(
       clusterOperations.setSlotAssignment(anyInt(), anyString(), anyString(), anyObject())(anyObject())
     ).thenReturn(
@@ -126,7 +125,6 @@ class MigrateSlotsTest extends TestKit(testSystem)
       val props = MigrateSlotsJobManager.props(migrateSlotWorkerMaker)
       val migrateSlotJobManager = TestActorRef[MigrateSlotsJobManager](props)
 
-      val dummyConnections = Map.empty[NodeId, Connection.Salad]
       val dummyReshardTable = Map.empty[NodeId, List[Slot]]
 
       val msg = MigrateSlotsForNewMaster(redisURI, dummyConnections, testRedisUriToNodeId, dummySaladApi, dummyReshardTable)
@@ -134,6 +132,27 @@ class MigrateSlotsTest extends TestKit(testSystem)
       migrateSlotJobManager ! msg
 
       probe.expectMsgAllOf(GetJob, GetJob)
+    }
+
+    "081 - retry to set slot assignment if slot assignment fails" in new TestConfig {
+      private val dummyManager = TestActorRef(TestActors.blackholeProps)
+      private val worker = TestActorRef[MigrateSlotWorker](MigrateSlotWorker.props(dummyManager))
+
+      when(
+        clusterOperations.setSlotAssignment(anyInt(), anyString(), anyString(), anyObject())(anyObject())
+      ).thenReturn(
+        Future.failed(SetSlotAssignmentException("wat"))
+      )
+
+      private val slot: Slot = 42
+
+      val msg = MigrateSlotJob("source", "target", slot, dummyConnections, Some(redisURI))
+
+      val logMsg = s"Retrying to set slot assignment for slot $slot"
+
+      EventFilter.info(message = logMsg, occurrences = MigrateSlotsConfigTest.maxNrRetries + 1) intercept {
+        worker ! msg
+      }
     }
   }
 
