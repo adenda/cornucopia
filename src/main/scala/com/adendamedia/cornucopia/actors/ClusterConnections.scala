@@ -2,7 +2,7 @@ package com.adendamedia.cornucopia.actors
 
 import com.adendamedia.cornucopia.Config.ClusterConnectionsConfig
 import com.adendamedia.cornucopia.redis.{ClusterOperations, RedisHelpers}
-import akka.actor.{Actor, ActorLogging, ActorRef, OneForOneStrategy, Props}
+import akka.actor.{Actor, ActorLogging, ActorRef, AllForOneStrategy, OneForOneStrategy, Props}
 import akka.actor.SupervisorStrategy.{Escalate, Restart}
 import akka.pattern.pipe
 import com.adendamedia.cornucopia.CornucopiaException.FailedOverseerCommand
@@ -31,16 +31,16 @@ class ClusterConnectionsSupervisor(implicit config: ClusterConnectionsConfig, cl
   val clusterConnectionsProps = ClusterConnections.props(self)
   val clusterConnections = context.actorOf(clusterConnectionsProps, ClusterConnections.name)
 
-  override def supervisorStrategy = OneForOneStrategy(config.maxNrRetries) {
+  override def supervisorStrategy = AllForOneStrategy(config.maxNrRetries) {
     case _: FailedOverseerCommand =>
       implicit val executionContext: ExecutionContext = config.executionContext
       log.error("Error getting cluster connections, retrying")
-      context.system.scheduler.scheduleOnce(2.seconds)(self ! Retry)
+      context.system.scheduler.scheduleOnce(config.retryBackoffTime.seconds)(self ! Retry)
       Restart
     case _: RedisClusterConnectionsInvalidException =>
       log.error("Error validating cluster connections, retrying")
       implicit val executionContext: ExecutionContext = config.executionContext
-      context.system.scheduler.scheduleOnce(2.seconds)(self ! Retry)
+      context.system.scheduler.scheduleOnce(config.retryBackoffTime.seconds)(self ! Retry)
       Restart
   }
 

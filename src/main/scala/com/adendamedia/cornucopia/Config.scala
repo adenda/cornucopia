@@ -26,6 +26,7 @@ object Config {
     val maxNrRetries: Int
     val executionContext: ExecutionContext
     val expectedTotalNumberSlots: Int
+    val retryBackoffTime: Int
   }
 
   trait ClusterReadyConfig {
@@ -105,6 +106,7 @@ class Config(implicit val sharedActorSystem: ActorSystem) {
       val maxNrRetries: Int = config.getInt("cluster.connections.max.retries")
       val executionContext: ExecutionContext = actorSystem.dispatcher
       val expectedTotalNumberSlots: Int = ReshardTableConfig.ExpectedTotalNumberSlots
+      val retryBackoffTime: Int = config.getInt("cluster.connections.retry.backoff.time")
     }
 
     object ClusterReady extends ClusterReadyConfig {

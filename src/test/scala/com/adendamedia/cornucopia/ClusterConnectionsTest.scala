@@ -35,6 +35,7 @@ class ClusterConnectionsTest extends TestKit(testSystem)
       val maxNrRetries: Int = 2
       val executionContext: ExecutionContext = system.dispatcher
       override val expectedTotalNumberSlots: Int = 42 // don't care
+      override val retryBackoffTime: Int = 0
     }
     implicit val clusterOperations: ClusterOperations = mock[ClusterOperations]
     implicit val redisHelpers: RedisHelpers = mock[RedisHelpers]
@@ -66,7 +67,7 @@ class ClusterConnectionsTest extends TestKit(testSystem)
       val msg = GetClusterConnections(redisURI)
 
       EventFilter.error(message = expectedErrorMessage,
-        occurrences = ClusterConnectionsConfigTest.maxNrRetries) intercept {
+        occurrences = ClusterConnectionsConfigTest.maxNrRetries + 1) intercept {
         clusterConnectionsSupervisor ! msg
       }
     }
@@ -100,7 +101,7 @@ class ClusterConnectionsTest extends TestKit(testSystem)
       val msg = GetClusterConnections(redisURI)
 
       EventFilter.error(message = expectedErrorMessage,
-        occurrences = ClusterConnectionsConfigTest.maxNrRetries) intercept {
+        occurrences = ClusterConnectionsConfigTest.maxNrRetries + 1) intercept {
         clusterConnectionsSupervisor ! msg
       }
     }
