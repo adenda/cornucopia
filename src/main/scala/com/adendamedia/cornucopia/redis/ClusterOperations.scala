@@ -281,6 +281,10 @@ object ClusterOperationsImpl extends ClusterOperations {
           redisURI
         }
       }
+    } recover {
+      case e: RedisException =>
+        saladAPI.shutdown()
+        throw CornucopiaRedisConnectionException(s"Add nodes to cluster failed to get cluster connections", e)
     }
 
   }
