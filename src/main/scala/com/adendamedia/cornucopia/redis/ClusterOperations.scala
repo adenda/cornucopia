@@ -509,7 +509,7 @@ object ClusterOperationsImpl extends ClusterOperations {
     val notifications = clusterConnections map { case (_: NodeId, connection: Salad) =>
       connection.clusterSetSlotNode(slot, assignedNodeId) recover {
         case e: RedisCommandExecutionException =>
-          logger.error(s"Problem notifying slot assignment: ", e)
+          logger.error(s"Problem notifying slot assignment for slot $slot to assigned node $assignedNodeId: ", e)
           Unit
       }
     }
