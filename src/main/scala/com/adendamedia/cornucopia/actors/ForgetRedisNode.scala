@@ -5,8 +5,10 @@ import akka.actor.{Actor, ActorLogging, ActorRef, OneForOneStrategy, Props}
 import akka.pattern.pipe
 import com.adendamedia.cornucopia.redis.ClusterOperations
 import com.adendamedia.cornucopia.Config.ForgetRedisNodeConfig
+
 import scala.concurrent.duration._
 import Overseer.ForgetNode
+import com.lambdaworks.redis.RedisCommandExecutionException
 
 import scala.concurrent.ExecutionContext
 
@@ -31,6 +33,10 @@ class ForgetRedisNodeSupervisor[C <: ForgetNode](implicit config: ForgetRedisNod
     case e: CornucopiaForgetNodeException =>
       log.error(s"Error forgetting node: ${e.message}")
       self ! Retry
+      Restart
+    case e: RedisCommandExecutionException =>
+      log.warning(s"Failed to forget node, assuming everything is OK anyways: {}", e)
+      self ! NodeForgotten
       Restart
   }
 
