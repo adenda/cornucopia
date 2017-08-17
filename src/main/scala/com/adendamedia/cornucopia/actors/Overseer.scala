@@ -382,22 +382,23 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
       log.info(s"Got slaves of retired master $retiredMasterUri: ${event.slaves.map(_.getUri.toURI)}")
 
       if (event.slaves.isEmpty) {
+        log.warning(s"Retired master does not appear to be replicated by any slaves")
         val cmd = ForgetNode(retiredMasterUri)
         forgetRedisNodeSupervisor ! cmd
         context.unbecome()
         context.become(forgettingMasterNode(cmd, retiredMasterUri))
+      } else {
+        val excludedMaster = List(retiredMasterUri)
+        event.slaves foreach { slave =>
+          val msg = ReplicatePoorestRemainingMasterUsingSlave(slave.getUri, excludedMaster)
+          replicatePoorestMasterSupervisor ! msg
+        }
+        val slaves = event.slaves.map(_.getUri)
+        context.unbecome()
+        context.become(
+          replicatingPoorestRemainingMaster(retiredMasterUri, slaves, excludedMaster, connections, redisUriToNodeId)
+        )
       }
-
-      val excludedMaster = List(retiredMasterUri)
-      event.slaves foreach { slave =>
-        val msg = ReplicatePoorestRemainingMasterUsingSlave(slave.getUri, excludedMaster)
-        replicatePoorestMasterSupervisor ! msg
-      }
-      val slaves = event.slaves.map(_.getUri)
-      context.unbecome()
-      context.become(
-        replicatingPoorestRemainingMaster(retiredMasterUri, slaves, excludedMaster, connections, redisUriToNodeId)
-      )
   }
 
   private def replicatingPoorestRemainingMaster(retiredMasterUri: RedisURI,
