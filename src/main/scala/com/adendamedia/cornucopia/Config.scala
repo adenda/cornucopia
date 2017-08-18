@@ -32,6 +32,7 @@ object Config {
   trait ClusterReadyConfig {
     val executionContext: ExecutionContext
     val maxNrRetries: Int
+    val clusterReadyRetries: Int
 
     /**
       * Time in seconds to wait before checking if cluster is ready yet
@@ -113,6 +114,7 @@ class Config(implicit val sharedActorSystem: ActorSystem) {
       val executionContext: ExecutionContext = actorSystem.dispatcher
       val maxNrRetries: Int = config.getInt("cluster.ready.max.retries")
       val backOffTime: Int = config.getInt("cluster.ready.backoff.time")
+      val clusterReadyRetries: Int = config.getInt("cluster.ready.retries")
     }
 
     object MigrateSlots extends MigrateSlotsConfig {

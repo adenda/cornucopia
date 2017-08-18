@@ -2,12 +2,16 @@ package com.adendamedia.cornucopia.actors
 
 import com.adendamedia.cornucopia.Config.ClusterReadyConfig
 import com.adendamedia.cornucopia.redis.ClusterOperations
-import akka.actor.{Actor, ActorLogging, ActorRef, OneForOneStrategy, Props}
+import com.adendamedia.cornucopia.CornucopiaException._
+import akka.actor.{Actor, ActorLogging, ActorRef, OneForOneStrategy, Props, Terminated}
 import akka.actor.SupervisorStrategy.Restart
 import akka.pattern.pipe
 
 import scala.concurrent.duration._
 import com.adendamedia.cornucopia.CornucopiaException.FailedOverseerCommand
+import com.adendamedia.cornucopia.actors.Overseer.WaitForClusterToBeReady
+
+import scala.concurrent.ExecutionContext
 
 object ClusterReadySupervisor {
   def props(implicit config: ClusterReadyConfig, clusterOperations: ClusterOperations): Props =
@@ -16,12 +20,15 @@ object ClusterReadySupervisor {
   val name = "clusterReadySupervisor"
 }
 
-class ClusterReadySupervisor(implicit config: ClusterReadyConfig, clusterOperations: ClusterOperations)
-  extends Actor with ActorLogging {
+class ClusterReadySupervisor[C <: WaitForClusterToBeReady](implicit config: ClusterReadyConfig,
+                                                           clusterOperations: ClusterOperations)
+  extends CornucopiaSupervisor[WaitForClusterToBeReady] {
 
   import Overseer._
 
-  val clusterReady = context.actorOf(ClusterReady.props, ClusterReady.name)
+  private val clusterReady = context.actorOf(ClusterReady.props, ClusterReady.name)
+
+  context.watch(clusterReady)
 
   override def supervisorStrategy = OneForOneStrategy(config.maxNrRetries) {
     case e: FailedOverseerCommand =>
@@ -32,27 +39,30 @@ class ClusterReadySupervisor(implicit config: ClusterReadyConfig, clusterOperati
 
   override def receive: Receive = accepting
 
-  private def accepting: Receive = {
+  override def accepting: Receive = {
     case wait: WaitForClusterToBeReady =>
       clusterReady ! wait
-      context.become(waitingForClusterToBeReady(sender, wait))
+      context.become(processing(wait, sender))
   }
 
   private def scheduleReadinessCheck(cmd: OverseerCommand) = {
     val delay: Int = config.backOffTime
     log.warning(s"Cluster not yet ready, checking again in $delay seconds")
-    implicit val executionContext = config.executionContext
+    implicit val executionContext: ExecutionContext = config.executionContext
     context.system.scheduler.scheduleOnce(delay.seconds) {
       clusterReady ! cmd
     }
   }
 
-  private def waitingForClusterToBeReady(ref: ActorRef, wait: WaitForClusterToBeReady): Receive = {
+  protected def processing[D <: WaitForClusterToBeReady](command: D, ref: ActorRef): Receive = {
     case ClusterIsReady =>
       ref forward ClusterIsReady
-      context.become(accepting)
+      context.unbecome()
     case ClusterNotReady =>
-      scheduleReadinessCheck(wait)
+      scheduleReadinessCheck(command)
+    case Terminated(_) =>
+      context.unbecome()
+      throw FailedAddingRedisNodeException(s"Cluster was not ready after ${config.maxNrRetries} retries")
   }
 
 }
@@ -70,15 +80,36 @@ class ClusterReady(implicit config: ClusterReadyConfig, clusterOperations: Clust
   import Overseer._
 
   override def receive: Receive = {
-    case wait: WaitForClusterToBeReady => waitForClusterToBeReady(wait, sender)
-    case KillChild(cmd, _) => throw FailedOverseerCommand(cmd)
+    case wait: WaitForClusterToBeReady =>
+      context.become(waitingForClusterToBeReady(0))
+      waitForClusterToBeReady(wait, sender)
+    case KillChild(cmd, _) => throw FailedOverseerCommand(overseerCommand = cmd)
+  }
+
+  def waitingForClusterToBeReady(retries: Int): Receive = {
+    case wait: WaitForClusterToBeReady =>
+      val maxRetries = config.clusterReadyRetries
+      if (retries > maxRetries) {
+        context.unbecome()
+        throw FailedOverseerCommand(message = s"Failed waiting for cluster to be ready after maximum retries of $maxRetries reached", overseerCommand = wait)
+      } else {
+        context.unbecome()
+        context.become(waitingForClusterToBeReady(retries + 1))
+        waitForClusterToBeReady(wait, sender)
+      }
+    case KillChild(cmd, _) =>
+      context.unbecome()
+      throw FailedOverseerCommand(overseerCommand = cmd)
   }
 
   private def waitForClusterToBeReady(ready: WaitForClusterToBeReady, ref: ActorRef) = {
-    implicit val executionContext = config.executionContext
+    implicit val executionContext: ExecutionContext = config.executionContext
     clusterOperations.isClusterReady(ready.connections) map {
-      case true => ClusterIsReady
-      case false => ClusterNotReady
+      case true =>
+        context.unbecome()
+        ClusterIsReady
+      case false =>
+        ClusterNotReady
     } recover {
       case e =>
         log.error(s"Failed waiting for cluster to be ready: {}", e)

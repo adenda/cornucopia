@@ -31,18 +31,19 @@ class ClusterReadyTest extends TestKit(testSystem)
   }
 
   trait TestConfig {
-    implicit object ClusterReadyConfigTest extends ClusterReadyConfig {
+    implicit object Config extends ClusterReadyConfig {
       val maxNrRetries: Int = 2
+      override val clusterReadyRetries: Int = 1
       val executionContext: ExecutionContext = system.dispatcher
-      val backOffTime: Int = 1
+      val backOffTime: Int = 0
     }
     implicit val clusterOperations: ClusterOperations = mock[ClusterOperations]
   }
 
   "ClusterReady" must {
-    "retry if there is an exception" in new TestConfig {
+    "010 - retry if there is an exception" in new TestConfig {
 
-      implicit val executionContext: ExecutionContext = ClusterReadyConfigTest.executionContext
+      implicit val executionContext: ExecutionContext = Config.executionContext
 
       val dummyConnections = Map.empty[NodeId, Connection.Salad]
 
@@ -51,20 +52,20 @@ class ClusterReadyTest extends TestKit(testSystem)
       )
 
       val props = ClusterReadySupervisor.props
-      val clusterReadySupervisor = TestActorRef[ClusterReadySupervisor](props)
+      val clusterReadySupervisor = TestActorRef[ClusterReadySupervisor[WaitForClusterToBeReady]](props)
 
       val expectedErrorMessage = "Error waiting for node to become ready, retrying"
       val msg = WaitForClusterToBeReady(dummyConnections)
 
       EventFilter.error(message = expectedErrorMessage,
-        occurrences = ClusterReadyConfigTest.maxNrRetries + 1) intercept {
+        occurrences = Config.maxNrRetries + 1) intercept {
         clusterReadySupervisor ! msg
       }
     }
 
-    "retry if cluster is not ready" in new TestConfig {
+    "020 - retry if cluster is not ready" in new TestConfig {
 
-      implicit val executionContext: ExecutionContext = ClusterReadyConfigTest.executionContext
+      implicit val executionContext: ExecutionContext = Config.executionContext
 
       val dummyConnections = Map.empty[NodeId, Connection.Salad]
 
@@ -72,14 +73,14 @@ class ClusterReadyTest extends TestKit(testSystem)
         Future.successful(false)
       )
 
-      val props = ClusterReadySupervisor.props
-      val clusterReadySupervisor = TestActorRef[ClusterReadySupervisor](props)
+      private val props = ClusterReadySupervisor.props
+      private val clusterReadySupervisor = TestActorRef[ClusterReadySupervisor[WaitForClusterToBeReady]](props)
 
-      val expectedWarningMessagePattern = s"Cluster not yet ready, checking again in ${ClusterReadyConfigTest.backOffTime} seconds"
+      val expectedMessage = s"Error waiting for node to become ready, retrying"
       val msg = WaitForClusterToBeReady(dummyConnections)
 
-      EventFilter.warning(message = expectedWarningMessagePattern,
-        occurrences = ClusterReadyConfigTest.maxNrRetries + 1) intercept {
+      EventFilter.error(pattern = expectedMessage,
+        occurrences = Config.maxNrRetries + 1) intercept {
         clusterReadySupervisor ! msg
       }
     }
@@ -88,7 +89,7 @@ class ClusterReadyTest extends TestKit(testSystem)
       import ClusterOperations._
       import com.adendamedia.cornucopia.redis.Connection
 
-      implicit val executionContext: ExecutionContext = ClusterReadyConfigTest.executionContext
+      implicit val executionContext: ExecutionContext = Config.executionContext
 
       val dummyConnections = Map.empty[NodeId, Connection.Salad]
 
@@ -97,7 +98,7 @@ class ClusterReadyTest extends TestKit(testSystem)
       )
 
       val props = ClusterReadySupervisor.props
-      val clusterReadySupervisor = TestActorRef[ClusterReadySupervisor](props)
+      val clusterReadySupervisor = TestActorRef[ClusterReadySupervisor[WaitForClusterToBeReady]](props)
 
       clusterReadySupervisor ! WaitForClusterToBeReady(dummyConnections)
 
