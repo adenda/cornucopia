@@ -32,9 +32,9 @@ class ClusterConnectionsSupervisor(implicit config: ClusterConnectionsConfig, cl
   val clusterConnections = context.actorOf(clusterConnectionsProps, ClusterConnections.name)
 
   override def supervisorStrategy = AllForOneStrategy(config.maxNrRetries) {
-    case _: FailedOverseerCommand =>
+    case e: FailedOverseerCommand =>
       implicit val executionContext: ExecutionContext = config.executionContext
-      log.error("Error getting cluster connections, retrying")
+      log.error("Error getting cluster connections, retrying: {}", e.reason.getOrElse(new Exception("Unknown error")))
       context.system.scheduler.scheduleOnce(config.retryBackoffTime.seconds)(self ! Retry)
       Restart
     case _: RedisClusterConnectionsInvalidException =>
@@ -87,7 +87,9 @@ class ClusterConnections(supervisor: ActorRef)
 
   override def receive: Receive = {
     case get: GetClusterConnections => getConnections(get, sender)
-    case kill: KillChild => throw FailedOverseerCommand(kill.command)
+    case kill: KillChild =>
+      val message = kill.reason.getOrElse(new Exception("Unknown Error")).toString
+      throw FailedOverseerCommand(message, kill.command, kill.reason)
     case msg: GotClusterConnections => supervisor forward msg
   }
 
@@ -97,7 +99,7 @@ class ClusterConnections(supervisor: ActorRef)
       ValidateConnections(msg, connections)
     } recover {
       case e =>
-        self ! KillChild(msg)
+        self ! KillChild(msg, Some(e))
     } pipeTo validateClusterConnections
   }
 

@@ -104,7 +104,7 @@ class JoinRedisNode(implicit clusterOperations: ClusterOperations, config: JoinR
 
   private def delegating(nodeType: AddingNodeType, ref: ActorRef): Receive = {
     case Fail(message: OverseerCommand) =>
-      throw FailedOverseerCommand(message)
+      throw FailedOverseerCommand(overseerCommand = message)
     case Passthrough(uri: RedisURI) =>
       log.info("Node joined")
       nodeType match {

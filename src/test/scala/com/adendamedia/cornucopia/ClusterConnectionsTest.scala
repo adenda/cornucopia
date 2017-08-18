@@ -57,7 +57,7 @@ class ClusterConnectionsTest extends TestKit(testSystem)
       implicit val executionContext: ExecutionContext = ClusterConnectionsConfigTest.executionContext
 
       when(clusterOperations.getClusterConnections).thenReturn(
-        Future.failed(new Exception)
+        Future.failed(new Exception("foobar42"))
       )
 
       val props = ClusterConnectionsSupervisor.props
@@ -66,7 +66,7 @@ class ClusterConnectionsTest extends TestKit(testSystem)
       val expectedErrorMessage = "Error getting cluster connections, retrying"
       val msg = GetClusterConnections(redisURI)
 
-      EventFilter.error(message = expectedErrorMessage,
+      EventFilter.error(pattern = expectedErrorMessage,
         occurrences = ClusterConnectionsConfigTest.maxNrRetries + 1) intercept {
         clusterConnectionsSupervisor ! msg
       }

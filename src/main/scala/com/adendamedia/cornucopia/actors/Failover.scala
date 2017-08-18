@@ -201,7 +201,7 @@ class FailoverWorker(supervisor: ActorRef)(implicit config: FailoverConfig, clus
     case kill: KillChild =>
       val e = kill.reason.getOrElse(new Exception("An unknown error occurred"))
       log.error(s"Failed performing failover: {}", e)
-      throw FailedOverseerCommand(kill.command)
+      throw FailedOverseerCommand(overseerCommand = kill.command)
   }
 
   private def scheduleVerifyFailover(cmd: VerifyFailoverCommand) = {
@@ -259,7 +259,7 @@ class VerifyFailover(supervisor: ActorRef)(implicit config: FailoverConfig, clus
     case kill: KillChild =>
       val e = kill.reason.getOrElse(new Exception)
       log.error(s"Failed verifying failover: {}", e)
-      throw FailedOverseerCommand(kill.command)
+      throw FailedOverseerCommand(overseerCommand = kill.command)
   }
 
   private def verify(msg: VerifyFailoverCommand, role: Role, ref: ActorRef) = {

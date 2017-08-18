@@ -126,7 +126,7 @@ class GetRedisSourceNodes(computeReshardTableMaker: ActorRefFactory => ActorRef)
     case kill: KillChild =>
       val e = kill.reason.getOrElse(new Exception("An unknown error occurred"))
       log.error("Error getting redis source nodes: {}", e)
-      throw FailedOverseerCommand(kill.command)
+      throw FailedOverseerCommand(overseerCommand = kill.command)
   }
 
   private def getRedisTargetNodesAndRetiredNode(reshard: ReshardWithoutRetiredMaster) = {

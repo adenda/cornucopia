@@ -15,7 +15,8 @@ object CornucopiaException {
 
   // TODO: Give this a message so that error logs are descriptive
   @SerialVersionUID(1L)
-  case class FailedOverseerCommand(overseerCommand: OverseerCommand) extends Exception with Serializable
+  case class FailedOverseerCommand(message: String = "", overseerCommand: OverseerCommand, reason: Option[Throwable] = None)
+    extends Exception(message: String) with Serializable
 
   @SerialVersionUID(1L)
   case class FailedAddingRedisNodeException(message: String) extends Exception(message: String) with Serializable
