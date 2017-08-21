@@ -2,7 +2,7 @@ name := "cornucopia"
 
 organization := "com.adendamedia"
 
-version := "0.6.1-SNAPSHOT"
+version := "0.6.1"
 
 scalaVersion := "2.11.8"
 
