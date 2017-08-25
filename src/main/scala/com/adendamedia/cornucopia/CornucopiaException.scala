@@ -25,7 +25,15 @@ object CornucopiaException {
   case class FailedWaitingForClusterToBeReadyException(message: String) extends Exception(message: String) with Serializable
 
   @SerialVersionUID(1L)
-  case class MigrateSlotsException(message: String, command: OverseerCommand, reason: Option[Throwable])
+  case class FailedSlotMigrationJobException(message: String, job: MigrateSlotJob)
+    extends Exception(message: String) with Serializable
+
+  @SerialVersionUID(1L)
+  case class MigrateSlotsException(message: String, job: MigrateSlotJob, reason: Option[Throwable])
+    extends Exception(message: String) with Serializable
+
+  @SerialVersionUID(1L)
+  case class MigrateSlotsJobManagerException(message: String)
     extends Exception(message: String) with Serializable
 
   @SerialVersionUID(1L)

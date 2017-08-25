@@ -5,7 +5,7 @@ import akka.actor.{Actor, ActorLogging, ActorRef, ActorRefFactory, OneForOneStra
 import com.adendamedia.cornucopia.CornucopiaException._
 import com.adendamedia.cornucopia.redis.ClusterOperations
 import com.adendamedia.cornucopia.redis.Connection.SaladAPI
-import com.adendamedia.cornucopia.redis.ReshardTable.ReshardTableType
+import com.adendamedia.cornucopia.redis.ReshardTable.{ReshardTableType, Slot}
 import com.adendamedia.cornucopia.redis.ClusterOperations.{ClusterConnectionsType, NodeIdToRedisUri, RedisUriToNodeId}
 import com.lambdaworks.redis.RedisURI
 import com.lambdaworks.redis.cluster.models.partitions.RedisClusterNode
@@ -71,6 +71,10 @@ object Overseer {
                                               nodeIdToRedisUri: NodeIdToRedisUri,
                                               salad: SaladAPI,
                                               reshardTable: ReshardTableType) extends MigrateSlotsCommand
+
+  case class MigrateSlotJob(sourceNodeId: ClusterOperations.NodeId, targetNodeId: ClusterOperations.NodeId, slot: Slot,
+                            connections: ClusterOperations.ClusterConnectionsType,
+                            redisURI: Option[RedisURI] = None) extends OverseerCommand
 
   case class JobCompleted(job: OverseerCommand)
 

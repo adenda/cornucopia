@@ -55,6 +55,18 @@ class MigrateSlotsTest extends TestKit(testSystem)
     val dummyConnections: ClusterConnectionsType = Map.empty[NodeId, Connection.Salad]
   }
 
+  trait JobManagerTestConfig extends TestConfig {
+    implicit object Config extends MigrateSlotsConfig {
+      val executionContext: ExecutionContext = system.dispatcher
+      val maxNrRetries: Int = 0
+      val numberOfWorkers: Int = 1
+      val setSlotAssignmentRetryBackoff: Int = 0
+    }
+    val migrateSlotWorkerMaker = (f: ActorRefFactory, m: ActorRef) => f.actorOf(MigrateSlotWorker.props(m), MigrateSlotWorker.name)
+    val props = MigrateSlotsSupervisor.props(migrateSlotWorkerMaker)
+    val migrateSlotsSupervisor = TestActorRef[MigrateSlotsSupervisor[MigrateSlotsCommand]](props)
+  }
+
   trait SuccessTestForAddingNewMaster extends TestConfig {
     implicit val executionContext: ExecutionContext = MigrateSlotsConfigTest.executionContext
 
@@ -183,9 +195,7 @@ class MigrateSlotsTest extends TestKit(testSystem)
         migrateSlotsJobManager ! msg
       }
     }
-  }
 
-  "MigrateSlotsJobManager" should {
     "030 - signal to supervisor once it has completed its jobs" in new SuccessTestForAddingNewMaster {
       val props = MigrateSlotsJobManager.props(migrateSlotWorkerMaker)
       val migrateSlotsJobManager = TestActorRef[MigrateSlotsJobManager](props)
@@ -197,8 +207,27 @@ class MigrateSlotsTest extends TestKit(testSystem)
         case JobCompleted(_) => true
       }
     }
-  }
 
+    "090 - Fail job when the job fails during the set slot assignment stage but continue processing other jobs" in new JobManagerTestConfig {
+
+      when(
+        clusterOperations.setSlotAssignment(anyInt(), anyString(), anyString(), anyObject())(anyObject())
+      ).thenReturn(
+        Future.failed(SetSlotAssignmentException("wat"))
+      )
+
+      val reshardTableMock: ReshardTableType = Map("node1" -> List(1), "node2" -> List(2))
+
+      val msg = MigrateSlotsForNewMaster(redisURI, dummyConnections, testRedisUriToNodeId, dummySaladApi, reshardTableMock)
+
+      val message = s"Migrate slot job failed while trying to set slot assignment for job .*"
+
+      EventFilter[FailedSlotMigrationJobException](pattern = message, occurrences = reshardTableMock.size) intercept {
+        migrateSlotsSupervisor ! msg
+      }
+
+    }
+  }
 }
 
 object MigrateSlotsTest {
