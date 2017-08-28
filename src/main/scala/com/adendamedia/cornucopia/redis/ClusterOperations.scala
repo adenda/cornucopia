@@ -507,11 +507,7 @@ object ClusterOperationsImpl extends ClusterOperations {
   def notifySlotAssignment(slot: Slot, assignedNodeId: NodeId, clusterConnections: ClusterConnectionsType)
                           (implicit executionContext: ExecutionContext): Future[Unit] = {
     val notifications = clusterConnections map { case (_: NodeId, connection: Salad) =>
-      connection.clusterSetSlotNode(slot, assignedNodeId) recover {
-        case e: RedisCommandExecutionException =>
-          logger.error(s"Problem notifying slot assignment for slot $slot to assigned node $assignedNodeId: ", e)
-          Unit
-      }
+      connection.clusterSetSlotNode(slot, assignedNodeId)
     }
     Future.sequence(notifications).map(x => x)
   }

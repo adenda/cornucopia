@@ -183,6 +183,35 @@ class MigrateSlotsTest extends TestKit(testSystem)
     }
   }
 
+  "MigrateSlotKeysWorker" must {
+    "070 - log an error if a slot migration job fails at the notify slot assignment stage" in new TestConfig {
+      private val dummyManager = TestActorRef(TestActors.blackholeProps)
+      private val migrateSlotKeysWorker = TestActorRef[MigrateSlotKeysWorker](MigrateSlotKeysWorker.props(dummyManager))
+
+      when(
+        clusterOperations.migrateSlotKeys(anyInt(), anyObject(), anyString(), anyString(), anyObject())(anyObject())
+      ).thenReturn(
+        Future.successful()
+      )
+
+      when(
+        clusterOperations.notifySlotAssignment(anyInt(), anyString(), anyObject())(anyObject())
+      ).thenReturn(
+        Future.failed(new Exception("wat"))
+      )
+
+      private val slot: Slot = 42
+
+      val msg = MigrateSlotJob("source", "target", slot, dummyConnections, Some(redisURI))
+
+      private val logMsg: String = s"There was an error notifying slot assignment for job"
+
+      EventFilter.error(pattern = logMsg, occurrences = 1) intercept {
+        migrateSlotKeysWorker ! msg
+      }
+    }
+  }
+
   "MigrateSlotsJobManager" should {
     "010 - migrate slots for adding new master" in new SuccessTestForAddingNewMaster {
       val props = MigrateSlotsJobManager.props(migrateSlotWorkerMaker)

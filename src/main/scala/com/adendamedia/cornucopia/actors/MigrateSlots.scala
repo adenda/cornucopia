@@ -490,7 +490,11 @@ class MigrateSlotKeysWorker(topLevelWorker: ActorRef)
     context.actorOf(NotifySlotAssignmentWorker.props(topLevelWorker), NotifySlotAssignmentWorker.name)
 
   override def supervisorStrategy = OneForOneStrategy() {
-    case e: MigrateSlotsException => throw e
+    case e: MigrateSlotsException =>
+      val job = e.job
+      val reason = e.reason.getOrElse(new Exception("unknown error"))
+      log.error(s"There was an error notifying slot assignment for job $job: {}", reason)
+      Resume
   }
 
   override def receive: Receive = {
