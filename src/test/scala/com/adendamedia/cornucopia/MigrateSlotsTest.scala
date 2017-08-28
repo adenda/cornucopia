@@ -68,30 +68,6 @@ class MigrateSlotsTest extends TestKit(testSystem)
     implicit val ec: ExecutionContext = Config.executionContext
 
     when(
-      clusterOperations.setSlotAssignment(1, "node1", testTargetNodeId, dummyConnections)
-    ).thenReturn(
-      Future.failed(SetSlotAssignmentException("wat"))
-    )
-
-    when(
-      clusterOperations.setSlotAssignment(2, "node2", testTargetNodeId, dummyConnections)
-    ).thenReturn(
-      Future.successful()
-    )
-
-    when(
-      clusterOperations.setSlotAssignment(1, testTargetNodeId, "node1", dummyConnections)
-    ).thenReturn(
-      Future.failed(SetSlotAssignmentException("wat"))
-    )
-
-    when(
-      clusterOperations.setSlotAssignment(2, testTargetNodeId, "node2", dummyConnections)
-    ).thenReturn(
-      Future.successful()
-    )
-
-    when(
       clusterOperations.migrateSlotKeys(anyInt(), anyObject(), anyString(), anyString(), anyObject())(anyObject())
     ).thenReturn(
       Future.successful()
@@ -250,6 +226,18 @@ class MigrateSlotsTest extends TestKit(testSystem)
     "090 - Fail job when the job fails during the set slot assignment stage when adding a new master but continue to process other jobs" in new JobManagerTestConfig {
       val msg = MigrateSlotsForNewMaster(redisURI, dummyConnections, testRedisUriToNodeId, dummySaladApi, reshardTableMock)
 
+      when(
+        clusterOperations.setSlotAssignment(1, "node1", testTargetNodeId, dummyConnections)
+      ).thenReturn(
+        Future.failed(SetSlotAssignmentException("wat"))
+      )
+
+      when(
+        clusterOperations.setSlotAssignment(2, "node2", testTargetNodeId, dummyConnections)
+      ).thenReturn(
+        Future.successful()
+      )
+
       val message = s"The following slot migration jobs failed: (node1,1)"
       val expectedOccurrences = 1
 
@@ -261,6 +249,18 @@ class MigrateSlotsTest extends TestKit(testSystem)
     "091 - Fail job when the job fails during the set slot assignment stage when retiring an old master but continue to process other jobs" in new JobManagerTestConfig {
       val msg = MigrateSlotsWithoutRetiredMaster(redisURI, dummyConnections, testRedisUriToNodeId, testNodeIdToRedisUri, dummySaladApi, reshardTableMock)
 
+      when(
+        clusterOperations.setSlotAssignment(1, testTargetNodeId, "node1", dummyConnections)
+      ).thenReturn(
+        Future.failed(SetSlotAssignmentException("wat"))
+      )
+
+      when(
+        clusterOperations.setSlotAssignment(2, testTargetNodeId, "node2", dummyConnections)
+      ).thenReturn(
+        Future.successful()
+      )
+
       val message = s"The following slot migration jobs failed: (node1,1)"
       val expectedOccurrences = 1
 
@@ -269,7 +269,7 @@ class MigrateSlotsTest extends TestKit(testSystem)
       }
     }
 
-    "092 - Fail job when the job fails during the slot keys migrations stage but continue to process other jobs" in new JobManagerTestConfig {
+    "092 - Fail job when the job fails during the slot keys migrations stage when adding a new master but continue to process other jobs" in new JobManagerTestConfig {
 
       when(
         clusterOperations.setSlotAssignment(anyInt(), anyString(), anyString(), anyObject())(anyObject())
@@ -278,20 +278,53 @@ class MigrateSlotsTest extends TestKit(testSystem)
       )
 
       when(
-        clusterOperations.migrateSlotKeys(anyInt(), anyObject(), anyString(), anyString(), anyObject())(anyObject())
+        clusterOperations.migrateSlotKeys(1, redisURI, "node1", testTargetNodeId, dummyConnections)
       ).thenReturn(
-        // Any MigrateSlotsException is handled in the same way
         Future.failed(MigrateSlotKeysClusterDownException(reason = new Exception("wat")))
       )
 
-//      val reshardTableMock: ReshardTableType = Map("node1" -> List(1), "node2" -> List(2))
+      when(
+        clusterOperations.migrateSlotKeys(2, redisURI, "node2", testTargetNodeId, dummyConnections)
+      ).thenReturn(
+        Future.successful()
+      )
 
       val msg = MigrateSlotsForNewMaster(redisURI, dummyConnections, testRedisUriToNodeId, dummySaladApi, reshardTableMock)
 
-      // TODO: Correct the log message to indicate
-      val message = s"Migrate slot job failed while trying to set slot assignment for job .*"
+      val message = s"The following slot migration jobs failed: (node1,1)"
+      val expectedOccurrences = 1
 
-      EventFilter[FailedSlotMigrationJobException](pattern = message, occurrences = reshardTableMock.size) intercept {
+      EventFilter.warning(message = message, occurrences = 1) intercept {
+        migrateSlotsSupervisor ! msg
+      }
+    }
+
+    "093 - Fail job when the job fails during the slot keys migrations stage when retiring an old master but continue to process other jobs" in new JobManagerTestConfig {
+
+      when(
+        clusterOperations.setSlotAssignment(anyInt(), anyString(), anyString(), anyObject())(anyObject())
+      ).thenReturn(
+        Future.successful()
+      )
+
+      when(
+        clusterOperations.migrateSlotKeys(1, redisURI, testTargetNodeId, "node1", dummyConnections)
+      ).thenReturn(
+        Future.failed(MigrateSlotKeysClusterDownException(reason = new Exception("wat")))
+      )
+
+      when(
+        clusterOperations.migrateSlotKeys(2, redisURI, testTargetNodeId, "node2", dummyConnections)
+      ).thenReturn(
+        Future.successful()
+      )
+
+      val msg = MigrateSlotsWithoutRetiredMaster(redisURI, dummyConnections, testRedisUriToNodeId, testNodeIdToRedisUri, dummySaladApi, reshardTableMock)
+
+      val message = s"The following slot migration jobs failed: (node1,1)"
+      val expectedOccurrences = 1
+
+      EventFilter.warning(message = message, occurrences = 1) intercept {
         migrateSlotsSupervisor ! msg
       }
     }
