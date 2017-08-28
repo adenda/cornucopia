@@ -97,7 +97,7 @@ class MigrateSlotsJobManager(migrateSlotWorkerMaker: (ActorRefFactory, ActorRef)
   import Overseer._
   import MigrateSlotsJobManager._
 
-  override def supervisorStrategy = OneForOneStrategy() {
+  override def supervisorStrategy = AllForOneStrategy() {
     case e: MigrateSlotsException =>
       log.error(s"Migrate slot worker failed: {}", e)
       // reschedule the failed slot migration
@@ -105,7 +105,7 @@ class MigrateSlotsJobManager(migrateSlotWorkerMaker: (ActorRefFactory, ActorRef)
       self ! RescheduleJob(msg)
       Restart
     case e: FailedSlotMigrationJobException =>
-//      self ! JobHasFailed(e.job)
+      self ! JobHasFailed(e.job)
       Restart
   }
 
@@ -126,6 +126,7 @@ class MigrateSlotsJobManager(migrateSlotWorkerMaker: (ActorRefFactory, ActorRef)
     val pendingSlots = getMigrateJobSet(reshardTable)
     val runningSlots: Set[(NodeId, Slot)] = Set()
     val completedSlots: Set[(NodeId, Slot)] = Set()
+    val failedSlots: Set[(NodeId, Slot)] = Set()
 
     val numWorkers = config.numberOfWorkers
     log.info(s"Starting $numWorkers workers for running slot migration job")
@@ -133,7 +134,7 @@ class MigrateSlotsJobManager(migrateSlotWorkerMaker: (ActorRefFactory, ActorRef)
     val workers = List.fill(numWorkers)(migrateSlotWorkerMaker(context, self)).toSet
 
     context.become(migratingSlotsWithoutRetiredMaster(targetNodeId, connections, nodeIdToRedisUri, migrateCommand,
-      workers, ref, pendingSlots, runningSlots, completedSlots))
+      workers, ref, pendingSlots, runningSlots, completedSlots, failedSlots))
   }
 
   private def doMigratingForNewMaster(migrateCommand: MigrateSlotsForNewMaster, ref: ActorRef) = {
@@ -145,11 +146,12 @@ class MigrateSlotsJobManager(migrateSlotWorkerMaker: (ActorRefFactory, ActorRef)
     val pendingSlots = getMigrateJobSet(reshardTable)
     val runningSlots: Set[(NodeId, Slot)] = Set()
     val completedSlots: Set[(NodeId, Slot)] = Set()
+    val failedSlots: Set[(NodeId, Slot)] = Set()
 
     val workers: Set[ActorRef] = List.fill(config.numberOfWorkers)(migrateSlotWorkerMaker(context, self)).toSet
 
     context.become(migratingSlotsForNewMaster(targetNodeId, connections, migrateCommand, workers, ref,
-                                              pendingSlots, runningSlots, completedSlots))
+                                              pendingSlots, runningSlots, completedSlots, failedSlots))
   }
 
   /**
@@ -182,7 +184,8 @@ class MigrateSlotsJobManager(migrateSlotWorkerMaker: (ActorRefFactory, ActorRef)
                                                  ref: ActorRef,
                                                  pendingSlots: Set[(NodeId, Slot)],
                                                  runningSlots: Set[(NodeId, Slot)],
-                                                 completedSlots: Set[(NodeId, Slot)]): Receive = {
+                                                 completedSlots: Set[(NodeId, Slot)],
+                                                 failedSlots: Set[(NodeId, Slot)]): Receive = {
     case GetJob =>
       val worker = sender
       getNextSlotToMigrate(pendingSlots) match {
@@ -195,7 +198,7 @@ class MigrateSlotsJobManager(migrateSlotWorkerMaker: (ActorRefFactory, ActorRef)
           val updatedPendingSlots = pendingSlots - migrateSlot
           val updatedRunningSlots = runningSlots + migrateSlot
           val newState = migratingSlotsWithoutRetiredMaster(retiredNodeId, connections, nodeIdToRedisUri, cmd, workers,
-            ref, updatedPendingSlots, updatedRunningSlots, completedSlots)
+            ref, updatedPendingSlots, updatedRunningSlots, completedSlots, failedSlots)
           context.unbecome()
           context.become(newState)
         case None =>
@@ -205,7 +208,7 @@ class MigrateSlotsJobManager(migrateSlotWorkerMaker: (ActorRefFactory, ActorRef)
           // message. Then if that's the case, send a PoisonPill to all workers, and change behaviour/state to idle
           // again.
           log.info(s"No more jobs left")
-          if (pendingSlots.isEmpty && runningSlots.isEmpty) finishJob(cmd, ref, workers)
+          if (pendingSlots.isEmpty && runningSlots.isEmpty) finishJob(cmd, ref, workers, failedSlots)
       }
     case JobCompleted(job: MigrateSlotJob) =>
       log.debug(s"Successfully migrated slot ${job.slot} from $retiredNodeId to ${job.targetNodeId}")
@@ -213,7 +216,7 @@ class MigrateSlotsJobManager(migrateSlotWorkerMaker: (ActorRefFactory, ActorRef)
       val updatedCompletedSlots = completedSlots + migratedSlot
       val updatedRunningSlots = runningSlots - migratedSlot
       val newState = migratingSlotsWithoutRetiredMaster(retiredNodeId, connections, nodeIdToRedisUri, cmd, workers, ref,
-        pendingSlots, updatedRunningSlots, updatedCompletedSlots)
+        pendingSlots, updatedRunningSlots, updatedCompletedSlots, failedSlots)
       context.unbecome()
       context.become(newState)
     case RescheduleJob(job: MigrateSlotJob) =>
@@ -223,7 +226,18 @@ class MigrateSlotsJobManager(migrateSlotWorkerMaker: (ActorRefFactory, ActorRef)
       val updatedPendingSlots = pendingSlots + migrateSlot
       val updatedRunningSlots = runningSlots - migrateSlot
       val newState = migratingSlotsWithoutRetiredMaster(retiredNodeId, connections, nodeIdToRedisUri, cmd, workers,
-        ref, updatedPendingSlots, updatedRunningSlots, completedSlots)
+        ref, updatedPendingSlots, updatedRunningSlots, completedSlots, failedSlots)
+      context.unbecome()
+      context.become(newState)
+    case JobHasFailed(job: MigrateSlotJob) =>
+      log.error(s"Migrate slot job has failed: $job")
+      val slot = job.slot
+      val targetNodeId = job.targetNodeId
+      val migrateSlot = (targetNodeId, slot)
+      val updatedFailedSlots = failedSlots + migrateSlot
+      val updatedRunningSlots = runningSlots - migrateSlot
+      val newState = migratingSlotsWithoutRetiredMaster(retiredNodeId, connections, nodeIdToRedisUri, cmd, workers,
+        ref, pendingSlots, updatedRunningSlots, completedSlots, updatedFailedSlots)
       context.unbecome()
       context.become(newState)
   }
@@ -242,7 +256,8 @@ class MigrateSlotsJobManager(migrateSlotWorkerMaker: (ActorRefFactory, ActorRef)
                                          cmd: MigrateSlotsForNewMaster, workers: Set[ActorRef], ref: ActorRef,
                                          pendingSlots: Set[(NodeId, Slot)],
                                          runningSlots: Set[(NodeId, Slot)],
-                                         completedSlots: Set[(NodeId, Slot)]): Receive = {
+                                         completedSlots: Set[(NodeId, Slot)],
+                                         failedSlots: Set[(NodeId, Slot)]): Receive = {
     case GetJob =>
       val worker = sender
       getNextSlotToMigrate(pendingSlots) match {
@@ -251,7 +266,7 @@ class MigrateSlotsJobManager(migrateSlotWorkerMaker: (ActorRefFactory, ActorRef)
           val updatedPendingSlots = pendingSlots - migrateSlot
           val updatedRunningSlots = runningSlots + migrateSlot
           val newState = migratingSlotsForNewMaster(targetNodeId, connections, cmd, workers, ref,
-                                                    updatedPendingSlots, updatedRunningSlots, completedSlots)
+                                                    updatedPendingSlots, updatedRunningSlots, completedSlots, failedSlots)
           context.unbecome()
           context.become(newState)
         case None =>
@@ -261,7 +276,7 @@ class MigrateSlotsJobManager(migrateSlotWorkerMaker: (ActorRefFactory, ActorRef)
           // message. Then if that's the case, send a PoisonPill to all workers, and change behaviour/state to idle
           // again.
           log.info(s"No more jobs left")
-          if (pendingSlots.isEmpty && runningSlots.isEmpty) finishJob(cmd, ref, workers)
+          if (pendingSlots.isEmpty && runningSlots.isEmpty) finishJob(cmd, ref, workers, failedSlots)
       }
     case JobCompleted(job: MigrateSlotJob) =>
       log.debug(s"Successfully migrated slot ${job.slot} from ${job.sourceNodeId} to $targetNodeId")
@@ -270,7 +285,7 @@ class MigrateSlotsJobManager(migrateSlotWorkerMaker: (ActorRefFactory, ActorRef)
       val updatedRunningSlots = runningSlots - migratedSlot
       context.unbecome()
       val newState = migratingSlotsForNewMaster(targetNodeId, connections, cmd, workers, ref,
-                                                pendingSlots, updatedRunningSlots, updatedCompletedSlots)
+                                                pendingSlots, updatedRunningSlots, updatedCompletedSlots, failedSlots)
       context.become(newState)
     case RescheduleJob(job: MigrateSlotJob) =>
       val sourceNodeId = job.sourceNodeId
@@ -279,7 +294,18 @@ class MigrateSlotsJobManager(migrateSlotWorkerMaker: (ActorRefFactory, ActorRef)
       val updatedPendingSlots = pendingSlots + migrateSlot
       val updatedRunningSlots = runningSlots - migrateSlot
       val newState = migratingSlotsForNewMaster(targetNodeId, connections, cmd, workers, ref,
-        updatedPendingSlots, updatedRunningSlots, completedSlots)
+        updatedPendingSlots, updatedRunningSlots, completedSlots, failedSlots)
+      context.unbecome()
+      context.become(newState)
+    case JobHasFailed(job: MigrateSlotJob) =>
+      log.error(s"Migrate slot job has failed: $job")
+      val slot = job.slot
+      val sourceNodeId = job.sourceNodeId
+      val migrateSlot = (sourceNodeId, slot)
+      val updatedFailedSlots = failedSlots + migrateSlot
+      val updatedRunningSlots = runningSlots - migrateSlot
+      val newState = migratingSlotsForNewMaster(targetNodeId, connections, cmd, workers, ref,
+        pendingSlots, updatedRunningSlots, completedSlots, updatedFailedSlots)
       context.unbecome()
       context.become(newState)
   }
@@ -289,11 +315,16 @@ class MigrateSlotsJobManager(migrateSlotWorkerMaker: (ActorRefFactory, ActorRef)
     else pendingSlots.headOption
   }
 
-  private def finishJob(cmd: OverseerCommand, ref: ActorRef, workers: Set[ActorRef]) = {
+  private def finishJob(cmd: OverseerCommand, ref: ActorRef, workers: Set[ActorRef], failedSlots: Set[(NodeId, Slot)]) = {
     log.info(s"All jobs have completed, sending poison pill to all workers")
+    logFailedSlots(failedSlots)
     workers.foreach(_ ! PoisonPill)
     ref ! JobCompleted(cmd)
     context.unbecome() // idle
+  }
+
+  private def logFailedSlots(failedSlots: Set[(NodeId, Slot)]) = {
+    log.warning(s"The following slot migration jobs failed: ${failedSlots.mkString(", ")}")
   }
 
 }
@@ -312,6 +343,7 @@ object MigrateSlotWorker {
   }
 
   case object Retry
+  case class RegisterPeonWorker(ref: ActorRef)
 }
 
 class MigrateSlotWorker(jobManager: ActorRef)
@@ -322,22 +354,24 @@ class MigrateSlotWorker(jobManager: ActorRef)
   import MigrateSlotWorker._
   import Overseer.MigrateSlotJob
 
+  var watchList: List[ActorRef] = List()
+
   val setSlotAssignmentWorker: ActorRef =
     context.actorOf(SetSlotAssignmentWorker.props(self), SetSlotAssignmentWorker.name)
 
   context.watch(setSlotAssignmentWorker)
 
-  log.info(s"Worker at path ${self.path} is alive")
-
-  jobManager ! GetJob
+  override def preStart(): Unit = {
+    log.info(s"Worker at path ${self.path} is alive: Give me a job!")
+    jobManager ! GetJob
+  }
 
   override def postRestart(reason: Throwable): Unit = {
     log.info(s"Worker was restarted at path ${self.path}: Give me another job!")
     jobManager ! GetJob
-    super.postRestart(reason)
   }
 
-  override def supervisorStrategy = OneForOneStrategy(config.maxNrRetries) {
+  override def supervisorStrategy = AllForOneStrategy(config.maxNrRetries) {
     case e: MigrateSlotsException =>
       e.reason match {
         case Some(t: SetSlotAssignmentException) =>
@@ -353,10 +387,10 @@ class MigrateSlotWorker(jobManager: ActorRef)
   override def receive: Receive = {
     case job: MigrateSlotJob =>
       setSlotAssignmentWorker ! job
-      context.become(migratingSlot(job))
+      context.become(migratingSlot(job, List()))
   }
 
-  def migratingSlot(job: MigrateSlotJob): Receive = {
+  def migratingSlot(job: MigrateSlotJob, watchList: List[ActorRef]): Receive = {
     case complete: JobCompleted =>
       log.debug(s"Job complete")
       implicit val executionContext: ExecutionContext = config.executionContext
@@ -366,9 +400,16 @@ class MigrateSlotWorker(jobManager: ActorRef)
     case Retry =>
       log.info(s"Retrying to set slot assignment for slot ${job.slot}")
       setSlotAssignmentWorker ! job
-    case Terminated(_: ActorRef) =>
+    case Terminated(ref: ActorRef) =>
       // indicates that this slot job is failed
+      // TODO: choose exception message based on what actor terminated
+      watchList.filter(_ != ref).foreach(context.stop)
+      watchList.foreach(context.unwatch)
       throw FailedSlotMigrationJobException(s"Migrate slot job failed while trying to set slot assignment for job $job", job)
+    case RegisterPeonWorker(ref: ActorRef) =>
+      context.watch(ref)
+      context.unbecome()
+      context.become(migratingSlot(job, List(ref) ++ watchList))
   }
 
 }
@@ -387,31 +428,28 @@ class SetSlotAssignmentWorker(topLevelWorker: ActorRef)
   import Overseer._
   import MigrateSlotsJobManager._
   import ClusterOperations._
+  import MigrateSlotWorker._
 
   val migrateSlotKeysWorker: ActorRef =
     context.actorOf(MigrateSlotKeysWorker.props(topLevelWorker), MigrateSlotKeysWorker.name)
 
-  override def postRestart(reason: Throwable): Unit = {
-    log.info(s"Worker was restarted at path ${self.path}")
-    super.postRestart(reason)
-  }
-
-  override def supervisorStrategy = OneForOneStrategy() {
+  override def supervisorStrategy = AllForOneStrategy(config.maxNrRetries) {
     case e: MigrateSlotsException =>
-      e.reason match {
-        case Some(t: MigrateSlotKeysBusyKeyException) => Restart
-        case Some(t: MigrateSlotKeysClusterDownException) => throw e
-        case Some(t: MigrateSlotKeysInputOutputException) =>
-          // Note: This value is set as `cluster-node-timeout` when configuring the redis cluster, and is in
-          // milliseconds
-          log.warning(s"Input/Output error or timeout migrating slots, retrying") // TODO: print the slot number
-          migrateSlotKeysWorker ! e.job
-          Resume
-        case _ => throw e
-      }
+      implicit val executionContext: ExecutionContext = config.executionContext
+      context.system.scheduler.scheduleOnce(config.setSlotAssignmentRetryBackoff.seconds)(migrateSlotKeysWorker ! e.job)
+      Restart
   }
 
-  override def receive: Receive = {
+  override def receive: Receive  = waiting
+
+  private def waiting: Receive = {
+    case job: MigrateSlotJob =>
+      topLevelWorker ! RegisterPeonWorker(migrateSlotKeysWorker)
+      context.become(working)
+      doJob(job)
+  }
+
+  private def working: Receive = {
     case job: MigrateSlotJob => doJob(job)
     case e: Kill =>
       log.error(s"Error migrating slot {}", e.reason.getOrElse(new Exception("Unknown error")))
