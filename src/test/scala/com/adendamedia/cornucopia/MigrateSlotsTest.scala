@@ -161,26 +161,6 @@ class MigrateSlotsTest extends TestKit(testSystem)
       probe.expectMsgAllOf(GetJob, GetJob)
     }
 
-    "081 - retry to set slot assignment if slot assignment fails" in new TestConfig {
-      private val dummyManager = TestActorRef(TestActors.blackholeProps)
-      private val worker = TestActorRef[MigrateSlotWorker](MigrateSlotWorker.props(dummyManager))
-
-      when(
-        clusterOperations.setSlotAssignment(anyInt(), anyString(), anyString(), anyObject())(anyObject())
-      ).thenReturn(
-        Future.failed(SetSlotAssignmentException("wat"))
-      )
-
-      private val slot: Slot = 42
-
-      val msg = MigrateSlotJob("source", "target", slot, dummyConnections, Some(redisURI))
-
-      val logMsg = s"Retrying to set slot assignment for slot $slot"
-
-      EventFilter.info(message = logMsg, occurrences = MigrateSlotsConfigTest.maxNrRetries + 1) intercept {
-        worker ! msg
-      }
-    }
   }
 
   "MigrateSlotKeysWorker" must {
