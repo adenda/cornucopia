@@ -86,15 +86,22 @@ object MessageBus {
   /**
     * Event indicating that an attempt to add a redis node to the cluster has failed
     */
-  trait FailedAddingRedisNode {
+  trait FailedCornucopiaCommand {
     val reason: String
+    val uri: RedisURI
   }
 
   /**
     * Event indicating that an attempt to add a redis node to the cluster has failed
     * @param reason Sentence explaining the problem
     */
-  case class FailedAddingMasterRedisNode(reason: String) extends FailedAddingRedisNode
+  case class FailedAddingMasterRedisNode(reason: String, uri: RedisURI) extends FailedCornucopiaCommand
+
+  /**
+    * Event indicating that an attempt to remove a redis node from the cluster has failed
+    * @param reason Sentence explaining the problem
+    */
+  case class FailedRemovingMasterRedisNode(reason: String, uri: RedisURI) extends FailedCornucopiaCommand
 
   /**
     * Signals to the actor hierarchy performing redis cluster commands that it should shutdown

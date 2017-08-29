@@ -58,11 +58,11 @@ class JoinRedisNodeSupervisor[C <: JoinNode](implicit config: JoinRedisNodeConfi
       ref ! evt
       context.unbecome()
     case Retry =>
-      log.info(s"Retrying to join redis node ${command.redisURI}")
+      log.info(s"Retrying to join redis node ${command.uri}")
       joinRedisNode ! command
     case Terminated(_) =>
       context.unbecome()
-      throw FailedAddingRedisNodeException(s"Could not join Redis node to cluster after ${config.maxNrRetries} retries")
+      throw FailedAddingRedisNodeException(s"Could not join Redis node to cluster after ${config.maxNrRetries} retries", command)
   }
 }
 
@@ -154,11 +154,11 @@ class JoinRedisNodeDelegate(implicit clusterOperations: ClusterOperations) exten
     * @return Passthrough(uri) if success, or Fail(join) if fail sent back to the sender
     */
   private def joinNode(join: JoinNode, ref: ActorRef) = {
-    clusterOperations.addNodeToCluster(join.redisURI) map {
+    clusterOperations.addNodeToCluster(join.uri) map {
       uri => Passthrough(uri)
     } recover {
       case e: CornucopiaRedisConnectionException =>
-        log.error(s"Failed to join node ${join.redisURI.toURI} with error: ${e.message}")
+        log.error(s"Failed to join node ${join.uri.toURI} with error: ${e.message}")
         Fail(join)
     } pipeTo ref
   }

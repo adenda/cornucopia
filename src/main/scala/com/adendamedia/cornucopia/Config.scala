@@ -42,6 +42,8 @@ object Config {
 
   trait MigrateSlotsConfig {
     val executionContext: ExecutionContext
+    // maximum number of migrate slot jobs that can fail before the entire migrates slots jobs has to fail
+    val failureThreshold: Int
     val maxNrRetries: Int
     val numberOfWorkers: Int
     val setSlotAssignmentRetryBackoff: Int
@@ -120,6 +122,7 @@ class Config(implicit val sharedActorSystem: ActorSystem) {
     object MigrateSlots extends MigrateSlotsConfig {
       val executionContext: ExecutionContext = actorSystem.dispatchers.lookup("akka.actor.migrate-slots-dispatcher")
       val maxNrRetries: Int = config.getInt("migrate.slots.max.retries")
+      val failureThreshold: Int = config.getInt("migrate.slots.failure.threshold")
       val numberOfWorkers: Int = config.getInt("migrate.slots.workers")
       val setSlotAssignmentRetryBackoff: Int = config.getInt("migrate.slots.set.slot.assignment.retry.backoff")
     }

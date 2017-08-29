@@ -40,6 +40,7 @@ class MigrateSlotsTest extends TestKit(testSystem)
       val executionContext: ExecutionContext = system.dispatcher
       val maxNrRetries: Int = 2
       val numberOfWorkers: Int = 2
+      val failureThreshold: Int = 42
       val setSlotAssignmentRetryBackoff: Int = 0
     }
     implicit val clusterOperations: ClusterOperations = mock[ClusterOperations]
@@ -60,6 +61,7 @@ class MigrateSlotsTest extends TestKit(testSystem)
       val executionContext: ExecutionContext = system.dispatcher
       val maxNrRetries: Int = 1
       val numberOfWorkers: Int = 1
+      val failureThreshold: Int = 42
       val setSlotAssignmentRetryBackoff: Int = 0
     }
     val migrateSlotWorkerMaker = (f: ActorRefFactory, m: ActorRef) => f.actorOf(MigrateSlotWorker.props(m), MigrateSlotWorker.name)
@@ -80,6 +82,29 @@ class MigrateSlotsTest extends TestKit(testSystem)
     )
 
     val reshardTableMock: ReshardTableType = Map("node1" -> List(1), "node2" -> List(2))
+  }
+
+  trait FailedSlotMigrationTestConfig extends TestConfig {
+    implicit object Config extends MigrateSlotsConfig {
+      val executionContext: ExecutionContext = system.dispatcher
+      val maxNrRetries: Int = 1
+      val numberOfWorkers: Int = 1
+      val failureThreshold: Int = 1
+      val setSlotAssignmentRetryBackoff: Int = 0
+    }
+
+    val migrateSlotWorkerMaker = (f: ActorRefFactory, m: ActorRef) => f.actorOf(MigrateSlotWorker.props(m), MigrateSlotWorker.name)
+    val props = MigrateSlotsSupervisor.props(migrateSlotWorkerMaker)
+    val migrateSlotsSupervisor = TestActorRef[MigrateSlotsSupervisor[MigrateSlotsCommand]](props)
+    implicit val ec: ExecutionContext = Config.executionContext
+
+    val reshardTableMock: ReshardTableType = Map("node1" -> List(1), "node2" -> List(2), "node3" -> List(3))
+
+    when(
+      clusterOperations.setSlotAssignment(anyInt(), anyString(), anyString(), anyObject())(anyObject())
+    ).thenReturn(
+      Future.failed(SetSlotAssignmentException("wat"))
+    )
   }
 
   trait SuccessTestForAddingNewMaster extends TestConfig {
@@ -335,6 +360,26 @@ class MigrateSlotsTest extends TestKit(testSystem)
 
       EventFilter.warning(message = message, occurrences = 1) intercept {
         migrateSlotsSupervisor ! msg
+      }
+    }
+
+    "094 - Fail the entire slot migration job when the threshold of failed migrate slot jobs has been reached (adding master)" in new FailedSlotMigrationTestConfig {
+      val cmd = MigrateSlotsForNewMaster(redisURI, dummyConnections, testRedisUriToNodeId, dummySaladApi, reshardTableMock)
+
+      val msg = s"Migrate slots job has failed to process command"
+
+      EventFilter[FailedOverseerCommand](pattern = msg, occurrences = 1) intercept {
+        migrateSlotsSupervisor ! cmd
+      }
+    }
+
+    "095 - Fail the entire slot migration job when the threshold of failed migrate slot jobs has been reached (removing old master)" in new FailedSlotMigrationTestConfig {
+      val cmd = MigrateSlotsWithoutRetiredMaster(redisURI, dummyConnections, testRedisUriToNodeId, testNodeIdToRedisUri, dummySaladApi, reshardTableMock)
+
+      val msg = s"Migrate slots job has failed to process command"
+
+      EventFilter[FailedOverseerCommand](pattern = msg, occurrences = 1) intercept {
+        migrateSlotsSupervisor ! cmd
       }
     }
   }

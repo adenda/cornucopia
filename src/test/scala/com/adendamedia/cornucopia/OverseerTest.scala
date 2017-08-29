@@ -155,7 +155,7 @@ class OverseerTest extends TestKit(testSystem)
       system.eventStream.publish(addMasterNodeMessage)
 
       val msg = FailedAddingMasterRedisNode(
-        s"Could not join Redis node to cluster after $joinRedisNodeMaxNrRetries retries"
+        s"Could not join Redis node to cluster after $joinRedisNodeMaxNrRetries retries", redisURI
       )
 
       probe.expectMsg(msg)

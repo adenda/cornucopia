@@ -32,12 +32,14 @@ object Overseer {
 
   trait OverseerCommand
 
-  trait JoinNode extends OverseerCommand {
-    val redisURI: RedisURI
+  trait RedisNodeCommand extends OverseerCommand {
+    val uri: RedisURI
   }
 
-  case class JoinMasterNode(redisURI: RedisURI) extends JoinNode
-  case class JoinSlaveNode(redisURI: RedisURI) extends JoinNode
+  trait JoinNode extends RedisNodeCommand
+
+  case class JoinMasterNode(uri: RedisURI) extends JoinNode
+  case class JoinSlaveNode(uri: RedisURI) extends JoinNode
 
   trait NodeJoinedEvent {
     val uri: RedisURI
@@ -56,7 +58,7 @@ object Overseer {
 
   case class KillChild(command: OverseerCommand, reason: Option[Throwable] = None)
 
-  case class WaitForClusterToBeReady(connections: ClusterOperations.ClusterConnectionsType) extends OverseerCommand
+  case class WaitForClusterToBeReady(connections: ClusterOperations.ClusterConnectionsType, uri: RedisURI) extends RedisNodeCommand
   case object ClusterIsReady
   case object ClusterNotReady
 
@@ -172,9 +174,25 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
   log.info(s"I'm alive!")
 
   override def supervisorStrategy = OneForOneStrategy() {
-    case e: FailedAddingRedisNodeException =>
-      log.error(s"${e.message}: Restarting child actor")
-      context.system.eventStream.publish(FailedAddingMasterRedisNode(e.message))
+    case FailedAddingRedisNodeException(message: String, command: RedisNodeCommand) =>
+      log.error(s"$message: Restarting child actor")
+      val uri = command.uri
+      context.system.eventStream.publish(FailedAddingMasterRedisNode(reason = message, uri))
+      Restart
+    case FailedOverseerCommand(message: String, command: MigrateSlotsCommand, _) =>
+      log.error(s"Overseer failed migrating slots while trying to process command $command")
+      command match {
+        case cmd: MigrateSlotsForNewMaster =>
+          val uri = cmd.newMasterUri
+          context.system.eventStream.publish(FailedAddingMasterRedisNode(message, uri))
+        case cmd: MigrateSlotsWithoutRetiredMaster =>
+          val uri = cmd.retiredMasterUri
+          context.system.eventStream.publish(FailedRemovingMasterRedisNode(message, uri))
+        case _ =>
+          log.warning(s"Problem processing command $command")
+      }
+      context.unbecome()
+      context.become(acceptingCommands)
       Restart
   }
 
@@ -306,7 +324,7 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
       reshardTable match {
         case Some(table) =>
           if (connectionsAreValidForAddingNewMaster(table, connections, uri)) {
-            clusterReadySupervisor ! WaitForClusterToBeReady(connections._1)
+            clusterReadySupervisor ! WaitForClusterToBeReady(connections._1, uri)
             context.unbecome()
             context.become(waitingForClusterToBeReadyForNewMaster(uri, table, connections))
           }
@@ -325,7 +343,7 @@ class Overseer(joinRedisNodeSupervisorMaker: ActorRefFactory => ActorRef,
       clusterConnections match {
         case Some(connections) =>
           if (connectionsAreValidForAddingNewMaster(table, connections, uri)) {
-            clusterReadySupervisor ! WaitForClusterToBeReady(connections._1)
+            clusterReadySupervisor ! WaitForClusterToBeReady(connections._1, uri)
             context.unbecome()
             context.become(waitingForClusterToBeReadyForNewMaster(uri, table, connections))
           }

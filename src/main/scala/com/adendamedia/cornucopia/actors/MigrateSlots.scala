@@ -231,6 +231,9 @@ class MigrateSlotsJobManager(migrateSlotWorkerMaker: (ActorRefFactory, ActorRef)
       context.become(newState)
     case JobHasFailed(job: MigrateSlotJob) =>
       log.error(s"Migrate slot job has failed: $job")
+      if (failedSlots.size + 1 >= config.failureThreshold) {
+        throw FailedOverseerCommand(s"Migrate slots job has failed to process command $cmd", cmd)
+      }
       val slot = job.slot
       val targetNodeId = job.targetNodeId
       val migrateSlot = (targetNodeId, slot)
@@ -299,6 +302,9 @@ class MigrateSlotsJobManager(migrateSlotWorkerMaker: (ActorRefFactory, ActorRef)
       context.become(newState)
     case JobHasFailed(job: MigrateSlotJob) =>
       log.error(s"Migrate slot job has failed: $job")
+      if (failedSlots.size + 1 >= config.failureThreshold) {
+        throw FailedOverseerCommand(s"Migrate slots job has failed to process command $cmd", cmd)
+      }
       val slot = job.slot
       val sourceNodeId = job.sourceNodeId
       val migrateSlot = (sourceNodeId, slot)

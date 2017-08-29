@@ -19,7 +19,8 @@ object CornucopiaException {
     extends Exception(message: String) with Serializable
 
   @SerialVersionUID(1L)
-  case class FailedAddingRedisNodeException(message: String) extends Exception(message: String) with Serializable
+  case class FailedAddingRedisNodeException[C <: OverseerCommand](message: String, overseerCommand: C)
+    extends Exception(message: String) with Serializable
 
   @SerialVersionUID(1L)
   case class FailedWaitingForClusterToBeReadyException(message: String) extends Exception(message: String) with Serializable

@@ -32,6 +32,7 @@ class Dispatcher extends Actor with ActorLogging {
 
   context.system.eventStream.subscribe(self, classOf[NodeAdded])
   context.system.eventStream.subscribe(self, classOf[NodeRemoved])
+  context.system.eventStream.subscribe(self, classOf[FailedCornucopiaCommand])
 
   def receive: Receive = accepting
 
@@ -58,6 +59,16 @@ class Dispatcher extends Actor with ActorLogging {
       log.info(s"Redis node '${event.uri}' successfully removed")
       val ref = dispatchInformation.ref
       ref ! Right((dispatchInformation.task.operation.key, event.uri))
+      context.unbecome()
+    case event: FailedAddingMasterRedisNode =>
+      log.warning(s"Redis node ${event.uri} failed being added to cluster")
+      val ref = dispatchInformation.ref
+      ref ! Left((dispatchInformation.task.operation.key, event.uri))
+      context.unbecome()
+    case event: FailedRemovingMasterRedisNode =>
+      log.warning(s"Redis node ${event.uri} failed being removed from cluster")
+      val ref = dispatchInformation.ref
+      ref ! Left((dispatchInformation.task.operation.key, event.uri))
       context.unbecome()
   }
 

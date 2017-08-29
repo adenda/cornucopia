@@ -38,6 +38,8 @@ class ClusterReadyTest extends TestKit(testSystem)
       val backOffTime: Int = 0
     }
     implicit val clusterOperations: ClusterOperations = mock[ClusterOperations]
+    val uriString: String = "redis://192.168.0.100"
+    val redisURI: RedisURI = RedisURI.create(uriString)
   }
 
   "ClusterReady" must {
@@ -55,7 +57,7 @@ class ClusterReadyTest extends TestKit(testSystem)
       val clusterReadySupervisor = TestActorRef[ClusterReadySupervisor[WaitForClusterToBeReady]](props)
 
       val expectedErrorMessage = "Error waiting for node to become ready, retrying"
-      val msg = WaitForClusterToBeReady(dummyConnections)
+      val msg = WaitForClusterToBeReady(dummyConnections, redisURI)
 
       EventFilter.error(message = expectedErrorMessage,
         occurrences = Config.maxNrRetries + 1) intercept {
@@ -77,7 +79,7 @@ class ClusterReadyTest extends TestKit(testSystem)
       private val clusterReadySupervisor = TestActorRef[ClusterReadySupervisor[WaitForClusterToBeReady]](props)
 
       val expectedMessage = s"Error waiting for node to become ready, retrying"
-      val msg = WaitForClusterToBeReady(dummyConnections)
+      val msg = WaitForClusterToBeReady(dummyConnections, redisURI)
 
       EventFilter.error(pattern = expectedMessage,
         occurrences = Config.maxNrRetries + 1) intercept {
@@ -100,7 +102,7 @@ class ClusterReadyTest extends TestKit(testSystem)
       val props = ClusterReadySupervisor.props
       val clusterReadySupervisor = TestActorRef[ClusterReadySupervisor[WaitForClusterToBeReady]](props)
 
-      clusterReadySupervisor ! WaitForClusterToBeReady(dummyConnections)
+      clusterReadySupervisor ! WaitForClusterToBeReady(dummyConnections, redisURI)
 
       expectMsg {
         ClusterIsReady

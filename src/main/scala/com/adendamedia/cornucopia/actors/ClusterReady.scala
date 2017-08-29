@@ -62,7 +62,7 @@ class ClusterReadySupervisor[C <: WaitForClusterToBeReady](implicit config: Clus
       scheduleReadinessCheck(command)
     case Terminated(_) =>
       context.unbecome()
-      throw FailedAddingRedisNodeException(s"Cluster was not ready after ${config.maxNrRetries} retries")
+      throw FailedAddingRedisNodeException(s"Cluster was not ready after ${config.maxNrRetries} retries", command)
   }
 
 }
