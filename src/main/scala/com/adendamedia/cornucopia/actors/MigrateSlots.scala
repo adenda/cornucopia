@@ -491,21 +491,32 @@ class MigrateSlotKeysWorker(topLevelWorker: ActorRef)
 
   import Overseer._
   import MigrateSlotsJobManager._
+  import MigrateSlotWorker._
 
   val notifySlotAssignmentWorker: ActorRef =
     context.actorOf(NotifySlotAssignmentWorker.props(topLevelWorker), NotifySlotAssignmentWorker.name)
 
-  override def supervisorStrategy = OneForOneStrategy() {
+  override def supervisorStrategy = AllForOneStrategy(config.maxNrRetries) {
     case e: MigrateSlotsException =>
-      val job = e.job
-      val reason = e.reason.getOrElse(new Exception("unknown error"))
-      log.error(s"There was an error notifying slot assignment for job $job: {}", reason)
-      Resume
+      implicit val executionContext: ExecutionContext = config.executionContext
+      context.system.scheduler.scheduleOnce(config.setSlotAssignmentRetryBackoff.seconds)(notifySlotAssignmentWorker ! e.job)
+      Restart
   }
 
-  override def receive: Receive = {
+  override def receive: Receive  = waiting
+
+  private def waiting: Receive = {
+    case job: MigrateSlotJob =>
+      topLevelWorker ! RegisterPeonWorker(notifySlotAssignmentWorker)
+      context.become(working)
+      doJob(job)
+  }
+
+  private def working: Receive = {
     case job: MigrateSlotJob => doJob(job)
-    case e: Kill => throw MigrateSlotsException(s"Command failed: ${e.job}", e.job, e.reason)
+    case e: Kill =>
+      log.error(s"Error migrating slot {}", e.reason.getOrElse(new Exception("Unknown error")))
+      throw MigrateSlotsException(s"Command failed: ${e.job}", e.job, e.reason)
   }
 
   private def doJob(job: MigrateSlotJob) = {

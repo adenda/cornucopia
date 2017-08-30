@@ -47,6 +47,7 @@ object Config {
     val maxNrRetries: Int
     val numberOfWorkers: Int
     val setSlotAssignmentRetryBackoff: Int
+    val notifySlotAssignmentRetryBackoff: Int
   }
 
   trait ReplicatePoorestMasterConfig {
@@ -125,6 +126,7 @@ class Config(implicit val sharedActorSystem: ActorSystem) {
       val failureThreshold: Int = config.getInt("migrate.slots.failure.threshold")
       val numberOfWorkers: Int = config.getInt("migrate.slots.workers")
       val setSlotAssignmentRetryBackoff: Int = config.getInt("migrate.slots.set.slot.assignment.retry.backoff")
+      val notifySlotAssignmentRetryBackoff: Int = config.getInt("migrate.slots.notify.slot.assignment.retry.backoff")
     }
 
     object ReplicatePoorestMaster extends ReplicatePoorestMasterConfig {

@@ -42,6 +42,7 @@ class MigrateSlotsTest extends TestKit(testSystem)
       val numberOfWorkers: Int = 2
       val failureThreshold: Int = 42
       val setSlotAssignmentRetryBackoff: Int = 0
+      val notifySlotAssignmentRetryBackoff: Int = 0
     }
     implicit val clusterOperations: ClusterOperations = mock[ClusterOperations]
 
@@ -63,6 +64,7 @@ class MigrateSlotsTest extends TestKit(testSystem)
       val numberOfWorkers: Int = 1
       val failureThreshold: Int = 42
       val setSlotAssignmentRetryBackoff: Int = 0
+      val notifySlotAssignmentRetryBackoff: Int = 0
     }
     val migrateSlotWorkerMaker = (f: ActorRefFactory, m: ActorRef) => f.actorOf(MigrateSlotWorker.props(m), MigrateSlotWorker.name)
     val props = MigrateSlotsSupervisor.props(migrateSlotWorkerMaker)
@@ -91,6 +93,7 @@ class MigrateSlotsTest extends TestKit(testSystem)
       val numberOfWorkers: Int = 1
       val failureThreshold: Int = 1
       val setSlotAssignmentRetryBackoff: Int = 0
+      val notifySlotAssignmentRetryBackoff: Int = 0
     }
 
     val migrateSlotWorkerMaker = (f: ActorRefFactory, m: ActorRef) => f.actorOf(MigrateSlotWorker.props(m), MigrateSlotWorker.name)
@@ -363,7 +366,77 @@ class MigrateSlotsTest extends TestKit(testSystem)
       }
     }
 
-    "094 - Fail the entire slot migration job when the threshold of failed migrate slot jobs has been reached (adding master)" in new FailedSlotMigrationTestConfig {
+    "094 - Fail job when the job fails during the notify slot assignment stage when adding a new master but continue to process other jobs" in new JobManagerTestConfig {
+      when(
+        clusterOperations.setSlotAssignment(anyInt(), anyString(), anyString(), anyObject())(anyObject())
+      ).thenReturn(
+        Future.successful()
+      )
+
+      when(
+        clusterOperations.migrateSlotKeys(anyInt(), anyObject(), anyString(), anyString(), anyObject())(anyObject())
+      ).thenReturn(
+        Future.successful()
+      )
+
+      when(
+        clusterOperations.notifySlotAssignment(1, "target1", dummyConnections)
+      ).thenReturn(
+        Future.failed(new Exception("wat"))
+      )
+
+      when(
+        clusterOperations.notifySlotAssignment(2, "target1", dummyConnections)
+      ).thenReturn(
+        Future.successful()
+      )
+
+      val msg = MigrateSlotsForNewMaster(redisURI, dummyConnections, testRedisUriToNodeId, dummySaladApi, reshardTableMock)
+
+      val message = s"The following slot migration jobs failed: (node1,1)"
+      val expectedOccurrences = 1
+
+      EventFilter.warning(message = message, occurrences = 1) intercept {
+        migrateSlotsSupervisor ! msg
+      }
+    }
+
+    "095 - Fail job when the job fails during the notify slot assignment stage when removing an old master but continue to process other jobs" in new JobManagerTestConfig {
+      when(
+        clusterOperations.setSlotAssignment(anyInt(), anyString(), anyString(), anyObject())(anyObject())
+      ).thenReturn(
+        Future.successful()
+      )
+
+      when(
+        clusterOperations.migrateSlotKeys(anyInt(), anyObject(), anyString(), anyString(), anyObject())(anyObject())
+      ).thenReturn(
+        Future.successful()
+      )
+
+      when(
+        clusterOperations.notifySlotAssignment(1, "node1", dummyConnections)
+      ).thenReturn(
+        Future.failed(new Exception("wat"))
+      )
+
+      when(
+        clusterOperations.notifySlotAssignment(2, "node2", dummyConnections)
+      ).thenReturn(
+        Future.successful()
+      )
+
+      val msg = MigrateSlotsWithoutRetiredMaster(redisURI, dummyConnections, testRedisUriToNodeId, testNodeIdToRedisUri, dummySaladApi, reshardTableMock)
+
+      val message = s"The following slot migration jobs failed: (node1,1)"
+      val expectedOccurrences = 1
+
+      EventFilter.warning(message = message, occurrences = 1) intercept {
+        migrateSlotsSupervisor ! msg
+      }
+    }
+
+    "096 - Fail the entire slot migration job when the threshold of failed migrate slot jobs has been reached (adding master)" in new FailedSlotMigrationTestConfig {
       val cmd = MigrateSlotsForNewMaster(redisURI, dummyConnections, testRedisUriToNodeId, dummySaladApi, reshardTableMock)
 
       val msg = s"Migrate slots job has failed to process command"
@@ -373,7 +446,7 @@ class MigrateSlotsTest extends TestKit(testSystem)
       }
     }
 
-    "095 - Fail the entire slot migration job when the threshold of failed migrate slot jobs has been reached (removing old master)" in new FailedSlotMigrationTestConfig {
+    "097 - Fail the entire slot migration job when the threshold of failed migrate slot jobs has been reached (removing old master)" in new FailedSlotMigrationTestConfig {
       val cmd = MigrateSlotsWithoutRetiredMaster(redisURI, dummyConnections, testRedisUriToNodeId, testNodeIdToRedisUri, dummySaladApi, reshardTableMock)
 
       val msg = s"Migrate slots job has failed to process command"
