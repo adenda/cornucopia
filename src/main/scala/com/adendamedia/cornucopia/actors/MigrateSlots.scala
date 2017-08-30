@@ -408,10 +408,9 @@ class MigrateSlotWorker(jobManager: ActorRef)
       setSlotAssignmentWorker ! job
     case Terminated(ref: ActorRef) =>
       // indicates that this slot job is failed
-      // TODO: choose exception message based on what actor terminated
       watchList.filter(_ != ref).foreach(context.stop)
       watchList.foreach(context.unwatch)
-      throw FailedSlotMigrationJobException(s"Migrate slot job failed while trying to set slot assignment for job $job", job)
+      throw FailedSlotMigrationJobException(s"Migrate slot job failed for job $job", job)
     case RegisterPeonWorker(ref: ActorRef) =>
       context.watch(ref)
       context.unbecome()
